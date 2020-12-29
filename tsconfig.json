@@ -10,7 +10,10 @@
     "newLine": "lf",
     "declaration": true,
     "declarationMap": true,
-    "moduleResolution": "node"
+    "moduleResolution": "node",
+    "paths": {
+      "@codemirror/basic-setup": ["./src/basic-setup.ts"]
+    }
   },
   "include": ["src/*.ts", "test/*.ts"]
 }
