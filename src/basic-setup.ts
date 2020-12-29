@@ -1,18 +1,18 @@
-import {keymap, highlightSpecialChars, drawSelection, highlightActiveLine} from "@codemirror/next/view"
-import {Extension, EditorState} from "@codemirror/next/state"
-import {history, historyKeymap} from "@codemirror/next/history"
-import {foldGutter, foldKeymap} from "@codemirror/next/fold"
-import {indentOnInput} from "@codemirror/next/language"
-import {lineNumbers} from "@codemirror/next/gutter"
-import {defaultKeymap} from "@codemirror/next/commands"
-import {bracketMatching} from "@codemirror/next/matchbrackets"
-import {closeBrackets, closeBracketsKeymap} from "@codemirror/next/closebrackets"
-import {searchKeymap, highlightSelectionMatches} from "@codemirror/next/search"
-import {autocompletion, completionKeymap} from "@codemirror/next/autocomplete"
-import {commentKeymap} from "@codemirror/next/comment"
-import {rectangularSelection} from "@codemirror/next/rectangular-selection"
-import {defaultHighlightStyle} from "@codemirror/next/highlight"
-import {lintKeymap} from "@codemirror/next/lint"
+import {keymap, highlightSpecialChars, drawSelection, highlightActiveLine} from "@codemirror/view"
+import {Extension, EditorState} from "@codemirror/state"
+import {history, historyKeymap} from "@codemirror/history"
+import {foldGutter, foldKeymap} from "@codemirror/fold"
+import {indentOnInput} from "@codemirror/language"
+import {lineNumbers} from "@codemirror/gutter"
+import {defaultKeymap} from "@codemirror/commands"
+import {bracketMatching} from "@codemirror/matchbrackets"
+import {closeBrackets, closeBracketsKeymap} from "@codemirror/closebrackets"
+import {searchKeymap, highlightSelectionMatches} from "@codemirror/search"
+import {autocompletion, completionKeymap} from "@codemirror/autocomplete"
+import {commentKeymap} from "@codemirror/comment"
+import {rectangularSelection} from "@codemirror/rectangular-selection"
+import {defaultHighlightStyle} from "@codemirror/highlight"
+import {lintKeymap} from "@codemirror/lint"
 
 /// This is an extension value that just pulls together a whole lot of
 /// extensions that you might want in a basic editor. It is meant as a
@@ -75,5 +75,5 @@ export const basicSetup: Extension = [
   ])
 ]
 
-export {EditorView} from "@codemirror/next/view"
-export {EditorState} from "@codemirror/next/state"
+export {EditorView} from "@codemirror/view"
+export {EditorState} from "@codemirror/state"
