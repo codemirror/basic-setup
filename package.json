@@ -4,7 +4,7 @@
   "description": "Example configuration for the CodeMirror code editor",
   "scripts": {
     "test": "echo 'No tests'",
-    "prepare": "tsc && rollup -c"
+    "prepare": "tsc -p tsconfig.local.json && rollup -c"
   },
   "keywords": [
     "editor",
