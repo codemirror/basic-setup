@@ -1,5 +1,5 @@
 import {keymap, highlightSpecialChars, drawSelection, highlightActiveLine} from "@codemirror/view"
-import {Extension, EditorState, Prec} from "@codemirror/state"
+import {Extension, EditorState} from "@codemirror/state"
 import {history, historyKeymap} from "@codemirror/history"
 import {foldGutter, foldKeymap} from "@codemirror/fold"
 import {indentOnInput} from "@codemirror/language"
@@ -29,7 +29,7 @@ import {lintKeymap} from "@codemirror/lint"
 ///  - [custom selection drawing](#view.drawSelection)
 ///  - [multiple selections](#state.EditorState^allowMultipleSelections)
 ///  - [reindentation on input](#language.indentOnInput)
-///  - [the default highlight style](#highlight.defaultHighlightStyle)
+///  - [the default highlight style](#highlight.defaultHighlightStyle) (as fallback)
 ///  - [bracket matching](#matchbrackets.bracketMatching)
 ///  - [bracket closing](#closebrackets.closeBrackets)
 ///  - [autocompletion](#autocomplete.autocompletion)
@@ -56,7 +56,7 @@ export const basicSetup: Extension = [
   drawSelection(),
   EditorState.allowMultipleSelections.of(true),
   indentOnInput(),
-  Prec.fallback(defaultHighlightStyle),
+  defaultHighlightStyle.fallback,
   bracketMatching(),
   closeBrackets(),
   autocompletion(),
