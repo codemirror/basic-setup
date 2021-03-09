@@ -4,7 +4,7 @@
   "description": "Example configuration for the CodeMirror code editor",
   "scripts": {
     "test": "echo 'No tests'",
-    "prepare": "tsc -p tsconfig.local.json && rollup -c"
+    "prepare": "cm-buildhelper src/basic-setup.ts"
   },
   "keywords": [
     "editor",
@@ -43,9 +43,7 @@
     "@codemirror/view": "^0.18.0"
   },
   "devDependencies": {
-    "rollup": "^2.35.1",
-    "rollup-plugin-dts": "^2.0.1",
-    "typescript": "^4.1.3"
+    "@codemirror/buildhelper": "^0.1.0"
   },
   "repository": {
     "type": "git",
