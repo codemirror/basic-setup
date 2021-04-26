@@ -43,7 +43,7 @@
     "@codemirror/view": "^0.18.0"
   },
   "devDependencies": {
-    "@codemirror/buildhelper": "^0.1.0"
+    "@codemirror/buildhelper": "^0.1.5"
   },
   "repository": {
     "type": "git",
