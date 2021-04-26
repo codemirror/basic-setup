@@ -3,7 +3,7 @@
   "version": "0.18.0",
   "description": "Example configuration for the CodeMirror code editor",
   "scripts": {
-    "test": "echo 'No tests'",
+    "test": "cm-runtests",
     "prepare": "cm-buildhelper src/basic-setup.ts"
   },
   "keywords": [
