@@ -3,7 +3,7 @@ import {Extension, EditorState} from "@codemirror/state"
 import {history, historyKeymap} from "@codemirror/history"
 import {foldGutter, foldKeymap} from "@codemirror/fold"
 import {indentOnInput} from "@codemirror/language"
-import {lineNumbers} from "@codemirror/gutter"
+import {lineNumbers, highlightActiveLineGutter} from "@codemirror/gutter"
 import {defaultKeymap} from "@codemirror/commands"
 import {bracketMatching} from "@codemirror/matchbrackets"
 import {closeBrackets, closeBracketsKeymap} from "@codemirror/closebrackets"
@@ -35,6 +35,7 @@ import {lintKeymap} from "@codemirror/lint"
 ///  - [autocompletion](#autocomplete.autocompletion)
 ///  - [rectangular selection](#rectangular-selection.rectangularSelection)
 ///  - [active line highlighting](#view.highlightActiveLine)
+///  - [active line gutter highlighting](#gutter.highlightActiveLineGutter)
 ///  - [selection match highlighting](#search.highlightSelectionMatches)
 ///  - [search](#search.searchKeymap)
 ///  - [commenting](#comment.commentKeymap)
@@ -50,6 +51,7 @@ import {lintKeymap} from "@codemirror/lint"
 /// desired.
 export const basicSetup: Extension = [
   lineNumbers(),
+  highlightActiveLineGutter(),
   highlightSpecialChars(),
   history(),
   foldGutter(),
