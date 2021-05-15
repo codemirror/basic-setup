@@ -1,3 +1,9 @@
+## 0.18.1 (2021-05-15)
+
+### New features
+
+The basic setup now includes `highlightActiveLineGutter` from @codemirror/gutter.
+
 ## 0.18.0 (2021-03-03)
 
 ### Breaking changes
