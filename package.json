@@ -4,7 +4,8 @@
   "description": "Example configuration for the CodeMirror code editor",
   "scripts": {
     "test": "cm-runtests",
-    "prepare": "cm-buildhelper src/basic-setup.ts"
+    "prepare": "cm-buildhelper src/basic-setup.ts",
+    "build": "cm-buildhelper src/basic-setup.ts && esbuild dist/index.js --bundle --outfile=dist/index.bundle.js"
   },
   "keywords": [
     "editor",
@@ -43,7 +44,8 @@
     "@codemirror/view": "^0.18.0"
   },
   "devDependencies": {
-    "@codemirror/buildhelper": "^0.1.5"
+    "@codemirror/buildhelper": "^0.1.5",
+    "esbuild": "^0.11.23"
   },
   "repository": {
     "type": "git",

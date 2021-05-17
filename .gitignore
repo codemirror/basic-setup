@@ -5,3 +5,4 @@ package-lock.json
 /test/*.d.ts
 /test/*.d.ts.map
 .tern-*
+.DS_Store
