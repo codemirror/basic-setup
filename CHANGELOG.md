@@ -1,3 +1,9 @@
+## 0.18.2 (2021-05-25)
+
+### Bug fixes
+
+Fix too-low dependency on @codemirror/gutter that could cause broken upgrades.
+
 ## 0.18.1 (2021-05-15)
 
 ### New features
