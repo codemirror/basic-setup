@@ -31,7 +31,7 @@
     "@codemirror/commands": "^0.18.0",
     "@codemirror/comment": "^0.18.0",
     "@codemirror/fold": "^0.18.0",
-    "@codemirror/gutter": "^0.18.0",
+    "@codemirror/gutter": "^0.18.3",
     "@codemirror/highlight": "^0.18.0",
     "@codemirror/history": "^0.18.0",
     "@codemirror/language": "^0.18.0",
