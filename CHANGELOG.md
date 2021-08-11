@@ -1,3 +1,9 @@
+## 0.19.0 (2021-08-11)
+
+### Breaking changes
+
+Update dependencies to 0.19.0
+
 ## 0.18.2 (2021-05-25)
 
 ### Bug fixes
