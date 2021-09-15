@@ -19622,4 +19622,4 @@ function changeLineComment(option, ranges, state) {
     return null;
 }
 
-export { Compartment, EditorSelection, EditorState, EditorView, HighlightStyle, StreamLanguage, autocompletion, bracketMatching, closeBrackets, closeBracketsKeymap, commentKeymap, completionKeymap, defaultHighlightStyle, defaultKeymap, drawSelection, foldGutter, foldKeymap, highlightSelectionMatches, highlightSpecialChars, history, historyKeymap, indentLess, indentMore, indentOnInput, julia, keymap, lineNumbers, placeholder, rectangularSelection, searchKeymap, tags };
+export { Compartment, Decoration, EditorSelection, EditorState, EditorView, HighlightStyle, StreamLanguage, ViewPlugin, ViewUpdate, autocompletion, bracketMatching, closeBrackets, closeBracketsKeymap, commentKeymap, completionKeymap, defaultHighlightStyle, defaultKeymap, drawSelection, foldGutter, foldKeymap, highlightSelectionMatches, highlightSpecialChars, history, historyKeymap, indentLess, indentMore, indentOnInput, julia, keymap, lineNumbers, placeholder, rectangularSelection, searchKeymap, syntaxTree, tags };
