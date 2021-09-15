@@ -2,7 +2,7 @@ import { EditorState, EditorSelection, Compartment } from "@codemirror/state"
 import { StreamLanguage } from "@codemirror/stream-parser"
 import { julia } from "@codemirror/legacy-modes/mode/julia"
 import { lineNumbers } from "@codemirror/gutter"
-import { keymap, EditorView, highlightSpecialChars, drawSelection, highlightActiveLine } from "@codemirror/view"
+import { keymap, EditorView, highlightSpecialChars, drawSelection, highlightActiveLine, placeholder } from "@codemirror/view"
 import { historyKeymap, history } from "@codemirror/history"
 import { defaultKeymap, indentMore, indentLess } from "@codemirror/commands"
 import { defaultHighlightStyle, tags, HighlightStyle } from "@codemirror/highlight"
@@ -29,7 +29,7 @@ const basicSetup = [
     closeBrackets(),
     autocompletion(),
     rectangularSelection(),
-    highlightActiveLine(),
+    // highlightActiveLine(),
     highlightSelectionMatches(),
     keymap.of([
         ...closeBracketsKeymap,
@@ -47,6 +47,7 @@ export {
     EditorSelection,
     Compartment,
     EditorView,
+    placeholder,
     basicSetup,
     julia,
     keymap,

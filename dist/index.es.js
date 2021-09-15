@@ -12049,38 +12049,37 @@ class TabWidget extends WidgetType {
     ignoreEvent() { return false; }
 }
 
-/**
-Mark lines that have a cursor on them with the `"cm-activeLine"`
-DOM class.
-*/
-function highlightActiveLine() {
-    return activeLineHighlighter;
+class Placeholder extends WidgetType {
+    constructor(content) {
+        super();
+        this.content = content;
+    }
+    toDOM() {
+        let wrap = document.createElement("span");
+        wrap.className = "cm-placeholder";
+        wrap.style.pointerEvents = "none";
+        wrap.appendChild(typeof this.content == "string" ? document.createTextNode(this.content) : this.content);
+        if (typeof this.content == "string")
+            wrap.setAttribute("aria-label", "placeholder " + this.content);
+        else
+            wrap.setAttribute("aria-hidden", "true");
+        return wrap;
+    }
+    ignoreEvent() { return false; }
 }
-const lineDeco = /*@__PURE__*/Decoration.line({ attributes: { class: "cm-activeLine" } });
-const activeLineHighlighter = /*@__PURE__*/ViewPlugin.fromClass(class {
-    constructor(view) {
-        this.decorations = this.getDeco(view);
-    }
-    update(update) {
-        if (update.docChanged || update.selectionSet)
-            this.decorations = this.getDeco(update.view);
-    }
-    getDeco(view) {
-        let lastLineStart = -1, deco = [];
-        for (let r of view.state.selection.ranges) {
-            if (!r.empty)
-                return Decoration.none;
-            let line = view.visualLineAt(r.head);
-            if (line.from > lastLineStart) {
-                deco.push(lineDeco.range(line.from));
-                lastLineStart = line.from;
-            }
+/**
+Extension that enables a placeholder—a piece of example content
+to show when the editor is empty.
+*/
+function placeholder(content) {
+    return ViewPlugin.fromClass(class {
+        constructor(view) {
+            this.view = view;
+            this.placeholder = Decoration.set([Decoration.widget({ widget: new Placeholder(content), side: 1 }).range(0)]);
         }
-        return Decoration.set(deco);
-    }
-}, {
-    decorations: v => v.decorations
-});
+        get decorations() { return this.view.state.doc.length ? Decoration.none : this.placeholder; }
+    }, { decorations: v => v.decorations });
+}
 
 /**
 Node prop stored in a grammar's top syntax node to provide the
@@ -19636,7 +19635,7 @@ const basicSetup = [
     closeBrackets(),
     autocompletion(),
     rectangularSelection(),
-    highlightActiveLine(),
+    // highlightActiveLine(),
     highlightSelectionMatches(),
     keymap.of([
         ...closeBracketsKeymap,
@@ -19650,4 +19649,4 @@ const basicSetup = [
     ]),
 ];
 
-export { Compartment, EditorSelection, EditorState, EditorView, HighlightStyle, StreamLanguage, basicSetup, defaultKeymap, history, historyKeymap, indentLess, indentMore, julia, keymap, tags };
+export { Compartment, EditorSelection, EditorState, EditorView, HighlightStyle, StreamLanguage, basicSetup, defaultKeymap, history, historyKeymap, indentLess, indentMore, julia, keymap, placeholder, tags };
