@@ -4976,16 +4976,6 @@ function textRange(node, from, to = from) {
     range.setStart(node, from);
     return range;
 }
-function dispatchKey(elt, name, code) {
-    let options = { key: name, code: name, keyCode: code, which: code, cancelable: true };
-    let down = new KeyboardEvent("keydown", options);
-    down.synthetic = true;
-    elt.dispatchEvent(down);
-    let up = new KeyboardEvent("keyup", options);
-    up.synthetic = true;
-    elt.dispatchEvent(up);
-    return down.defaultPrevented || up.defaultPrevented;
-}
 
 class DOMPos {
     constructor(node, offset, precise = true) {
@@ -5157,11 +5147,8 @@ class ContentView {
     }
     replaceChildren(from, to, children = none$3) {
         this.markDirty();
-        for (let i = from; i < to; i++) {
-            let child = this.children[i];
-            if (child.parent == this)
-                child.parent = null;
-        }
+        for (let i = from; i < to; i++)
+            this.children[i].parent = null;
         this.children.splice(from, to - from, ...children);
         for (let i = 0; i < children.length; i++)
             children[i].setParent(this);
@@ -5966,9 +5953,7 @@ class LineView extends ContentView {
         }
         super.sync(track);
         let last = this.dom.lastChild;
-        if (!last ||
-            last.nodeName != "BR" && ContentView.get(last) instanceof WidgetView &&
-                (!browser.ios || !this.children.some(ch => ch instanceof TextView))) {
+        if (!last || (last.nodeName != "BR" && (!browser.ios && (ContentView.get(last) instanceof WidgetView)))) {
             let hack = document.createElement("BR");
             hack.cmIgnore = true;
             this.dom.appendChild(hack);
@@ -6606,8 +6591,7 @@ class DocView extends ContentView {
     // update
     updateInner(changes, deco, oldLength, forceSelection = false, pointerSel = false) {
         this.updateChildren(changes, deco, oldLength);
-        let { observer } = this.view;
-        observer.ignore(() => {
+        this.view.observer.ignore(() => {
             // Lock the height during redrawing, since Chrome sometimes
             // messes with the scroll position during DOM mutation (though
             // no relayout is triggered and I cannot imagine how it can
@@ -6618,10 +6602,10 @@ class DocView extends ContentView {
             // around the selection, get confused and report a different
             // selection from the one it displays (issue #218). This tries
             // to detect that situation.
-            let track = browser.chrome || browser.ios ? { node: observer.selectionRange.focusNode, written: false } : undefined;
+            let track = browser.chrome ? { node: getSelection(this.view.root).focusNode, written: false } : undefined;
             this.sync(track);
             this.dirty = 0 /* Not */;
-            if (track && (track.written || observer.selectionRange.focusNode != track.node))
+            if (track === null || track === void 0 ? void 0 : track.written)
                 forceSelection = true;
             this.updateSelection(forceSelection, pointerSel);
             this.dom.style.height = "";
@@ -6722,6 +6706,11 @@ class DocView extends ContentView {
             // Always reset on Firefox when next to an uneditable node to
             // avoid invisible cursor bugs (#111)
             (browser.gecko && main.empty && nextToUneditable(domSel.focusNode, domSel.focusOffset)) ||
+            // Safari sometimes goes into a weird state after backspacing
+            // out the last character on a line, and comes out of it when we
+            // reset the selection (#482)
+            (browser.safari && main.empty && head.node.childNodes.length == 1 && head.node.firstChild.nodeName == "BR" &&
+                this.view.inputState.lastIOSBackspace > Date.now() - 225) ||
             !isEquivalentPosition(anchor.node, anchor.offset, domSel.anchorNode, domSel.anchorOffset) ||
             !isEquivalentPosition(head.node, head.offset, domSel.focusNode, domSel.focusOffset)) {
             this.view.observer.ignore(() => {
@@ -7633,7 +7622,8 @@ class InputState {
     constructor(view) {
         this.lastKeyCode = 0;
         this.lastKeyTime = 0;
-        this.pendingIOSKey = null;
+        this.lastIOSEnter = 0;
+        this.lastIOSBackspace = 0;
         this.lastSelectionOrigin = null;
         this.lastSelectionTime = 0;
         this.lastEscPress = 0;
@@ -7730,7 +7720,7 @@ class InputState {
         this.lastKeyCode = event.keyCode;
         this.lastKeyTime = Date.now();
         if (this.screenKeyEvent(view, event))
-            return true;
+            return;
         // Prevent the default behavior of Enter on iOS makes the
         // virtual keyboard get stuck in the wrong (lowercase)
         // state. So we let it go through, and then, in
@@ -7738,18 +7728,10 @@ class InputState {
         // the state they produce.
         if (browser.ios && (event.keyCode == 13 || event.keyCode == 8) &&
             !(event.ctrlKey || event.altKey || event.metaKey) && !event.synthetic) {
-            this.pendingIOSKey = event.keyCode == 13 ? "enter" : "backspace";
-            setTimeout(() => this.flushIOSKey(view), 250);
+            this[event.keyCode == 13 ? "lastIOSEnter" : "lastIOSBackspace"] = Date.now();
             return true;
         }
         return false;
-    }
-    flushIOSKey(view) {
-        if (!this.pendingIOSKey)
-            return false;
-        let dom = view.contentDOM, key = this.pendingIOSKey;
-        this.pendingIOSKey = null;
-        return key == "enter" ? dispatchKey(dom, "Enter", 13) : dispatchKey(dom, "Backspace", 8);
     }
     ignoreDuringComposition(event) {
         if (!/^key/.test(event.type))
@@ -8072,13 +8054,16 @@ handlers.dragstart = (view, event) => {
         event.dataTransfer.effectAllowed = "copyMove";
     }
 };
-function dropText(view, event, text, direct) {
+handlers.drop = (view, event) => {
+    if (!event.dataTransfer || !view.state.facet(editable))
+        return;
     let dropPos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+    let text = event.dataTransfer.getData("Text");
     if (dropPos == null || !text)
         return;
     event.preventDefault();
     let { mouseSelection } = view.inputState;
-    let del = direct && mouseSelection && mouseSelection.dragging && mouseSelection.dragMove ?
+    let del = mouseSelection && mouseSelection.dragging && mouseSelection.dragMove ?
         { from: mouseSelection.dragging.from, to: mouseSelection.dragging.to } : null;
     let ins = { from: dropPos, insert: text };
     let changes = view.state.changes(del ? [del, ins] : ins);
@@ -8088,32 +8073,6 @@ function dropText(view, event, text, direct) {
         selection: { anchor: changes.mapPos(dropPos, -1), head: changes.mapPos(dropPos, 1) },
         annotations: Transaction.userEvent.of("drop")
     });
-}
-handlers.drop = (view, event) => {
-    if (!event.dataTransfer || !view.state.facet(editable))
-        return;
-    let files = event.dataTransfer.files;
-    if (files && files.length) { // For a file drop, read the file's text.
-        event.preventDefault();
-        let text = Array(files.length), read = 0;
-        let finishFile = () => {
-            if (++read == files.length)
-                dropText(view, event, text.filter(s => s != null).join(view.state.lineBreak), false);
-        };
-        for (let i = 0; i < files.length; i++) {
-            let reader = new FileReader;
-            reader.onerror = finishFile;
-            reader.onload = () => {
-                if (!/[\x00-\x08\x0e-\x1f]{2}/.test(reader.result))
-                    text[i] = reader.result;
-                finishFile();
-            };
-            reader.readAsText(files[i]);
-        }
-    }
-    else {
-        dropText(view, event, event.dataTransfer.getData("Text"), true);
-    }
 };
 handlers.paste = (view, event) => {
     if (!view.state.facet(editable))
@@ -9862,12 +9821,16 @@ function applyDOMChange(view, start, end, typeOver) {
         if (browser.android &&
             ((change.from == sel.from && change.to == sel.to &&
                 change.insert.length == 1 && change.insert.lines == 2 &&
-                dispatchKey(view.contentDOM, "Enter", 13)) ||
+                dispatchKey(view, "Enter", 13)) ||
                 (change.from == sel.from - 1 && change.to == sel.to && change.insert.length == 0 &&
-                    dispatchKey(view.contentDOM, "Backspace", 8)) ||
+                    dispatchKey(view, "Backspace", 8)) ||
                 (change.from == sel.from && change.to == sel.to + 1 && change.insert.length == 0 &&
-                    dispatchKey(view.contentDOM, "Delete", 46))) ||
-            browser.ios && view.inputState.flushIOSKey(view))
+                    dispatchKey(view, "Delete", 46))) ||
+            browser.ios &&
+                ((view.inputState.lastIOSEnter > Date.now() - 225 && change.insert.lines > 1 &&
+                    dispatchKey(view, "Enter", 13)) ||
+                    (view.inputState.lastIOSBackspace > Date.now() - 225 && !change.insert.length &&
+                        dispatchKey(view, "Backspace", 8))))
             return;
         let text = change.insert.toString();
         if (view.state.facet(inputHandler).some(h => h(view, change.from, change.to, text)))
@@ -10019,6 +9982,16 @@ function selectionFromPoints(points, base) {
         return null;
     let anchor = points[0].pos, head = points.length == 2 ? points[1].pos : anchor;
     return anchor > -1 && head > -1 ? EditorSelection.single(anchor + base, head + base) : null;
+}
+function dispatchKey(view, name, code) {
+    let options = { key: name, code: name, keyCode: code, which: code, cancelable: true };
+    let down = new KeyboardEvent("keydown", options);
+    down.synthetic = true;
+    view.contentDOM.dispatchEvent(down);
+    let up = new KeyboardEvent("keyup", options);
+    up.synthetic = true;
+    view.contentDOM.dispatchEvent(up);
+    return down.defaultPrevented || up.defaultPrevented;
 }
 
 // The editor's update state machine looks something like this:
@@ -10320,6 +10293,9 @@ class EditorView {
             autocorrect: "off",
             autocapitalize: "off",
             contenteditable: String(this.state.facet(editable)),
+            // Disable the Grammarly extension, which otherwise feels free
+            // to randomly mess with our DOM structure.
+            "data-gramm": "false",
             class: "cm-content",
             style: `${browser.tabSize}: ${this.state.tabSize}`,
             role: "textbox",
@@ -12345,59 +12321,45 @@ function foldable(state, lineStart, lineEnd) {
 }
 
 let nextTagID = 0;
-/**
-Highlighting tags are markers that denote a highlighting category.
-They are [associated](https://codemirror.net/6/docs/ref/#highlight.styleTags) with parts of a syntax
-tree by a language mode, and then mapped to an actual CSS style by
-a [highlight style](https://codemirror.net/6/docs/ref/#highlight.HighlightStyle).
-
-Because syntax tree node types and highlight styles have to be
-able to talk the same language, CodeMirror uses a mostly _closed_
-[vocabulary](https://codemirror.net/6/docs/ref/#highlight.tags) of syntax tags (as opposed to
-traditional open string-based systems, which make it hard for
-highlighting themes to cover all the tokens produced by the
-various languages).
-
-It _is_ possible to [define](https://codemirror.net/6/docs/ref/#highlight.Tag^define) your own
-highlighting tags for system-internal use (where you control both
-the language package and the highlighter), but such tags will not
-be picked up by regular highlighters (though you can derive them
-from standard tags to allow highlighters to fall back to those).
-*/
+/// Highlighting tags are markers that denote a highlighting category.
+/// They are [associated](#highlight.styleTags) with parts of a syntax
+/// tree by a language mode, and then mapped to an actual CSS style by
+/// a [highlight style](#highlight.HighlightStyle).
+///
+/// Because syntax tree node types and highlight styles have to be
+/// able to talk the same language, CodeMirror uses a mostly _closed_
+/// [vocabulary](#highlight.tags) of syntax tags (as opposed to
+/// traditional open string-based systems, which make it hard for
+/// highlighting themes to cover all the tokens produced by the
+/// various languages).
+///
+/// It _is_ possible to [define](#highlight.Tag^define) your own
+/// highlighting tags for system-internal use (where you control both
+/// the language package and the highlighter), but such tags will not
+/// be picked up by regular highlighters (though you can derive them
+/// from standard tags to allow highlighters to fall back to those).
 class Tag {
-    /**
-    @internal
-    */
+    /// @internal
     constructor(
-    /**
-    The set of tags that match this tag, starting with this one
-    itself, sorted in order of decreasing specificity. @internal
-    */
+    /// The set of tags that match this tag, starting with this one
+    /// itself, sorted in order of decreasing specificity. @internal
     set, 
-    /**
-    The base unmodified tag that this one is based on, if it's
-    modified @internal
-    */
+    /// The base unmodified tag that this one is based on, if it's
+    /// modified @internal
     base, 
-    /**
-    The modifiers applied to this.base @internal
-    */
+    /// The modifiers applied to this.base @internal
     modified) {
         this.set = set;
         this.base = base;
         this.modified = modified;
-        /**
-        @internal
-        */
+        /// @internal
         this.id = nextTagID++;
     }
-    /**
-    Define a new tag. If `parent` is given, the tag is treated as a
-    sub-tag of that parent, and [highlight
-    styles](https://codemirror.net/6/docs/ref/#highlight.HighlightStyle) that don't mention this tag
-    will try to fall back to the parent tag (or grandparent tag,
-    etc).
-    */
+    /// Define a new tag. If `parent` is given, the tag is treated as a
+    /// sub-tag of that parent, and [highlight
+    /// styles](#highlight.HighlightStyle) that don't mention this tag
+    /// will try to fall back to the parent tag (or grandparent tag,
+    /// etc).
     static define(parent) {
         if (parent === null || parent === void 0 ? void 0 : parent.base)
             throw new Error("Can not derive from a modified tag");
@@ -12408,18 +12370,16 @@ class Tag {
                 tag.set.push(t);
         return tag;
     }
-    /**
-    Define a tag _modifier_, which is a function that, given a tag,
-    will return a tag that is a subtag of the original. Applying the
-    same modifier to a twice tag will return the same value (`m1(t1)
-    == m1(t1)`) and applying multiple modifiers will, regardless or
-    order, produce the same tag (`m1(m2(t1)) == m2(m1(t1))`).
-    
-    When multiple modifiers are applied to a given base tag, each
-    smaller set of modifiers is registered as a parent, so that for
-    example `m1(m2(m3(t1)))` is a subtype of `m1(m2(t1))`,
-    `m1(m3(t1)`, and so on.
-    */
+    /// Define a tag _modifier_, which is a function that, given a tag,
+    /// will return a tag that is a subtag of the original. Applying the
+    /// same modifier to a twice tag will return the same value (`m1(t1)
+    /// == m1(t1)`) and applying multiple modifiers will, regardless or
+    /// order, produce the same tag (`m1(m2(t1)) == m2(m1(t1))`).
+    ///
+    /// When multiple modifiers are applied to a given base tag, each
+    /// smaller set of modifiers is registered as a parent, so that for
+    /// example `m1(m2(m3(t1)))` is a subtype of `m1(m2(t1))`,
+    /// `m1(m3(t1)`, and so on.
     static defineModifier() {
         let mod = new Modifier;
         return (tag) => {
@@ -12462,58 +12422,56 @@ function permute(array) {
     }
     return result;
 }
-/**
-This function is used to add a set of tags to a language syntax
-via
-[`Parser.configure`](https://lezer.codemirror.net/docs/ref#lezer.Parser.configure).
-
-The argument object maps node selectors to [highlighting
-tags](https://codemirror.net/6/docs/ref/#highlight.Tag) or arrays of tags.
-
-Node selectors may hold one or more (space-separated) node paths.
-Such a path can be a [node
-name](https://lezer.codemirror.net/docs/ref#tree.NodeType.name),
-or multiple node names (or `*` wildcards) separated by slash
-characters, as in `"Block/Declaration/VariableName"`. Such a path
-matches the final node but only if its direct parent nodes are the
-other nodes mentioned. A `*` in such a path matches any parent,
-but only a single level—wildcards that match multiple parents
-aren't supported, both for efficiency reasons and because Lezer
-trees make it rather hard to reason about what they would match.)
-
-A path can be ended with `/...` to indicate that the tag assigned
-to the node should also apply to all child nodes, even if they
-match their own style (by default, only the innermost style is
-used).
-
-When a path ends in `!`, as in `Attribute!`, no further matching
-happens for the node's child nodes, and the entire node gets the
-given style.
-
-In this notation, node names that contain `/`, `!`, `*`, or `...`
-must be quoted as JSON strings.
-
-For example:
-
-```javascript
-parser.withProps(
-  styleTags({
-    // Style Number and BigNumber nodes
-    "Number BigNumber": tags.number,
-    // Style Escape nodes whose parent is String
-    "String/Escape": tags.escape,
-    // Style anything inside Attributes nodes
-    "Attributes!": tags.meta,
-    // Add a style to all content inside Italic nodes
-    "Italic/...": tags.emphasis,
-    // Style InvalidString nodes as both `string` and `invalid`
-    "InvalidString": [tags.string, tags.invalid],
-    // Style the node named "/" as punctuation
-    '"/"': tags.punctuation
-  })
-)
-```
-*/
+/// This function is used to add a set of tags to a language syntax
+/// via
+/// [`Parser.configure`](https://lezer.codemirror.net/docs/ref#lezer.Parser.configure).
+///
+/// The argument object maps node selectors to [highlighting
+/// tags](#highlight.Tag) or arrays of tags.
+///
+/// Node selectors may hold one or more (space-separated) node paths.
+/// Such a path can be a [node
+/// name](https://lezer.codemirror.net/docs/ref#tree.NodeType.name),
+/// or multiple node names (or `*` wildcards) separated by slash
+/// characters, as in `"Block/Declaration/VariableName"`. Such a path
+/// matches the final node but only if its direct parent nodes are the
+/// other nodes mentioned. A `*` in such a path matches any parent,
+/// but only a single level—wildcards that match multiple parents
+/// aren't supported, both for efficiency reasons and because Lezer
+/// trees make it rather hard to reason about what they would match.)
+///
+/// A path can be ended with `/...` to indicate that the tag assigned
+/// to the node should also apply to all child nodes, even if they
+/// match their own style (by default, only the innermost style is
+/// used).
+///
+/// When a path ends in `!`, as in `Attribute!`, no further matching
+/// happens for the node's child nodes, and the entire node gets the
+/// given style.
+///
+/// In this notation, node names that contain `/`, `!`, `*`, or `...`
+/// must be quoted as JSON strings.
+///
+/// For example:
+///
+/// ```javascript
+/// parser.withProps(
+///   styleTags({
+///     // Style Number and BigNumber nodes
+///     "Number BigNumber": tags.number,
+///     // Style Escape nodes whose parent is String
+///     "String/Escape": tags.escape,
+///     // Style anything inside Attributes nodes
+///     "Attributes!": tags.meta,
+///     // Add a style to all content inside Italic nodes
+///     "Italic/...": tags.emphasis,
+///     // Style InvalidString nodes as both `string` and `invalid`
+///     "InvalidString": [tags.string, tags.invalid],
+///     // Style the node named "/" as punctuation
+///     '"/"': tags.punctuation
+///   })
+/// )
+/// ```
 function styleTags(spec) {
     let byName = Object.create(null);
     for (let prop in spec) {
@@ -12553,15 +12511,16 @@ function styleTags(spec) {
     }
     return ruleNodeProp.add(byName);
 }
-const ruleNodeProp = /*@__PURE__*/new NodeProp();
-const highlightStyle = /*@__PURE__*/Facet.define({
+const ruleNodeProp = new NodeProp();
+const highlightStyle = Facet.define({
     combine(stylings) { return stylings.length ? HighlightStyle.combinedMatch(stylings) : null; }
 });
-const fallbackHighlightStyle = /*@__PURE__*/Facet.define({
+const fallbackHighlightStyle = Facet.define({
     combine(values) { return values.length ? values[0].match : null; }
 });
+function noHighlight() { return null; }
 function getHighlightStyle(state) {
-    return state.facet(highlightStyle) || state.facet(fallbackHighlightStyle);
+    return state.facet(highlightStyle) || state.facet(fallbackHighlightStyle) || noHighlight;
 }
 class Rule {
     constructor(tags, mode, context, next) {
@@ -12580,10 +12539,8 @@ class Rule {
     }
     get depth() { return this.context ? this.context.length : 0; }
 }
-/**
-A highlight style associates CSS styles with higlighting
-[tags](https://codemirror.net/6/docs/ref/#highlight.Tag).
-*/
+/// A highlight style associates CSS styles with higlighting
+/// [tags](#highlight.Tag).
 class HighlightStyle {
     constructor(spec, options) {
         this.map = Object.create(null);
@@ -12613,10 +12570,8 @@ class HighlightStyle {
         this.extension = ext.concat(highlightStyle.of(this));
         this.fallback = ext.concat(fallbackHighlightStyle.of(this));
     }
-    /**
-    Returns the CSS class associated with the given tag, if any.
-    This method is bound to the instance by the constructor.
-    */
+    /// Returns the CSS class associated with the given tag, if any.
+    /// This method is bound to the instance by the constructor.
     match(tag, scope) {
         if (this.scope && scope != this.scope)
             return null;
@@ -12630,11 +12585,9 @@ class HighlightStyle {
         }
         return this.map[tag.id] = this.all;
     }
-    /**
-    Combines an array of highlight styles into a single match
-    function that returns all of the classes assigned by the styles
-    for a given tag.
-    */
+    /// Combines an array of highlight styles into a single match
+    /// function that returns all of the classes assigned by the styles
+    /// for a given tag.
     static combinedMatch(styles) {
         if (styles.length == 1)
             return styles[0].match;
@@ -12654,34 +12607,29 @@ class HighlightStyle {
             return result;
         };
     }
-    /**
-    Create a highlighter style that associates the given styles to
-    the given tags. The spec must be objects that hold a style tag
-    or array of tags in their `tag` property, and either a single
-    `class` property providing a static CSS class (for highlighters
-    like [`classHighlightStyle`](https://codemirror.net/6/docs/ref/#highlight.classHighlightStyle)
-    that rely on external styling), or a
-    [`style-mod`](https://github.com/marijnh/style-mod#documentation)-style
-    set of CSS properties (which define the styling for those tags).
-    
-    The CSS rules created for a highlighter will be emitted in the
-    order of the spec's properties. That means that for elements that
-    have multiple tags associated with them, styles defined further
-    down in the list will have a higher CSS precedence than styles
-    defined earlier.
-    */
+    /// Create a highlighter style that associates the given styles to
+    /// the given tags. The spec must be objects that hold a style tag
+    /// or array of tags in their `tag` property, and either a single
+    /// `class` property providing a static CSS class (for highlighters
+    /// like [`classHighlightStyle`](#highlight.classHighlightStyle)
+    /// that rely on external styling), or a
+    /// [`style-mod`](https://github.com/marijnh/style-mod#documentation)-style
+    /// set of CSS properties (which define the styling for those tags).
+    ///
+    /// The CSS rules created for a highlighter will be emitted in the
+    /// order of the spec's properties. That means that for elements that
+    /// have multiple tags associated with them, styles defined further
+    /// down in the list will have a higher CSS precedence than styles
+    /// defined earlier.
     static define(specs, options) {
         return new HighlightStyle(specs, options || {});
     }
-    /**
-    Returns the CSS classes (if any) that the highlight styles
-    active in the given state would assign to the given a style
-    [tag](https://codemirror.net/6/docs/ref/#highlight.Tag) and (optional) language
-    [scope](https://codemirror.net/6/docs/ref/#highlight.HighlightStyle^define^options.scope).
-    */
+    /// Returns the CSS classes (if any) that the highlight styles
+    /// active in the given state would assign to the given a style
+    /// [tag](#highlight.Tag) and (optional) language
+    /// [scope](#highlight.HighlightStyle^define^options.scope).
     static get(state, tag, scope) {
-        let style = getHighlightStyle(state);
-        return style && style(tag, scope || NodeType.none);
+        return getHighlightStyle(state)(tag, scope || NodeType.none);
     }
 }
 class TreeHighlighter {
@@ -12702,7 +12650,7 @@ class TreeHighlighter {
         }
     }
     buildDeco(view, match) {
-        if (!match || !this.tree.length)
+        if (match == noHighlight || !this.tree.length)
             return Decoration.none;
         let builder = new RangeSetBuilder();
         for (let { from, to } of view.visibleRanges) {
@@ -12715,19 +12663,13 @@ class TreeHighlighter {
 }
 // This extension installs a highlighter that highlights based on the
 // syntax tree and highlight style.
-const treeHighlighter = /*@__PURE__*/Prec.fallback(/*@__PURE__*/ViewPlugin.fromClass(TreeHighlighter, {
+const treeHighlighter = Prec.fallback(ViewPlugin.fromClass(TreeHighlighter, {
     decorations: v => v.decorations
 }));
 const nodeStack = [""];
 function highlightTreeRange(tree, from, to, style, span) {
     let spanStart = from, spanClass = "";
     let cursor = tree.topNode.cursor;
-    function flush(at, newClass) {
-        if (spanClass)
-            span(spanStart, at, spanClass);
-        spanStart = at;
-        spanClass = newClass;
-    }
     function node(inheritedClass, depth, scope) {
         let { type, from: start, to: end } = cursor;
         if (start >= to || end <= from)
@@ -12755,21 +12697,28 @@ function highlightTreeRange(tree, from, to, style, span) {
             }
             rule = rule.next;
         }
-        let upto = start;
+        if (cls != spanClass) {
+            if (start > spanStart && spanClass)
+                span(spanStart, cursor.from, spanClass);
+            spanStart = start;
+            spanClass = cls;
+        }
         if (!opaque && cursor.firstChild()) {
             do {
-                if (cursor.from > upto && spanClass != cls)
-                    flush(upto, cls);
-                upto = cursor.to;
+                let end = cursor.to;
                 node(inheritedClass, depth + 1, scope);
+                if (spanClass != cls) {
+                    let pos = Math.min(to, end);
+                    if (pos > spanStart && spanClass)
+                        span(spanStart, pos, spanClass);
+                    spanStart = pos;
+                    spanClass = cls;
+                }
             } while (cursor.nextSibling());
             cursor.parent();
         }
-        if (end > upto && spanClass != cls)
-            flush(upto, cls);
     }
     node("", 0, tree.type);
-    flush(to, "");
 }
 function matchContext(context, stack, depth) {
     if (context.length > depth - 1)
@@ -12782,385 +12731,216 @@ function matchContext(context, stack, depth) {
     return true;
 }
 const t = Tag.define;
-const comment = /*@__PURE__*/t(), name = /*@__PURE__*/t(), typeName = /*@__PURE__*/t(name), literal = /*@__PURE__*/t(), string = /*@__PURE__*/t(literal), number = /*@__PURE__*/t(literal), content = /*@__PURE__*/t(), heading = /*@__PURE__*/t(content), keyword = /*@__PURE__*/t(), operator = /*@__PURE__*/t(), punctuation = /*@__PURE__*/t(), bracket = /*@__PURE__*/t(punctuation), meta = /*@__PURE__*/t();
-/**
-The default set of highlighting [tags](https://codemirror.net/6/docs/ref/#highlight.Tag^define) used
-by regular language packages and themes.
-
-This collection is heavily biased towards programming languages,
-and necessarily incomplete. A full ontology of syntactic
-constructs would fill a stack of books, and be impractical to
-write themes for. So try to make do with this set. If all else
-fails, [open an
-issue](https://github.com/codemirror/codemirror.next) to propose a
-new tag, or [define](https://codemirror.net/6/docs/ref/#highlight.Tag^define) a local custom tag for
-your use case.
-
-Note that it is not obligatory to always attach the most specific
-tag possible to an element—if your grammar can't easily
-distinguish a certain type of element (such as a local variable),
-it is okay to style it as its more general variant (a variable).
-
-For tags that extend some parent tag, the documentation links to
-the parent.
-*/
+const comment = t(), name = t(), typeName = t(name), literal = t(), string = t(literal), number = t(literal), content = t(), heading = t(content), keyword = t(), operator = t(), punctuation = t(), bracket = t(punctuation), meta = t();
+/// The default set of highlighting [tags](#highlight.Tag^define) used
+/// by regular language packages and themes.
+///
+/// This collection is heavily biased towards programming languages,
+/// and necessarily incomplete. A full ontology of syntactic
+/// constructs would fill a stack of books, and be impractical to
+/// write themes for. So try to make do with this set. If all else
+/// fails, [open an
+/// issue](https://github.com/codemirror/codemirror.next) to propose a
+/// new tag, or [define](#highlight.Tag^define) a local custom tag for
+/// your use case.
+///
+/// Note that it is not obligatory to always attach the most specific
+/// tag possible to an element—if your grammar can't easily
+/// distinguish a certain type of element (such as a local variable),
+/// it is okay to style it as its more general variant (a variable).
+/// 
+/// For tags that extend some parent tag, the documentation links to
+/// the parent.
 const tags = {
-    /**
-    A comment.
-    */
+    /// A comment.
     comment,
-    /**
-    A line [comment](https://codemirror.net/6/docs/ref/#highlight.tags.comment).
-    */
-    lineComment: /*@__PURE__*/t(comment),
-    /**
-    A block [comment](https://codemirror.net/6/docs/ref/#highlight.tags.comment).
-    */
-    blockComment: /*@__PURE__*/t(comment),
-    /**
-    A documentation [comment](https://codemirror.net/6/docs/ref/#highlight.tags.comment).
-    */
-    docComment: /*@__PURE__*/t(comment),
-    /**
-    Any kind of identifier.
-    */
+    /// A line [comment](#highlight.tags.comment).
+    lineComment: t(comment),
+    /// A block [comment](#highlight.tags.comment).
+    blockComment: t(comment),
+    /// A documentation [comment](#highlight.tags.comment).
+    docComment: t(comment),
+    /// Any kind of identifier.
     name,
-    /**
-    The [name](https://codemirror.net/6/docs/ref/#highlight.tags.name) of a variable.
-    */
-    variableName: /*@__PURE__*/t(name),
-    /**
-    A type [name](https://codemirror.net/6/docs/ref/#highlight.tags.name).
-    */
+    /// The [name](#highlight.tags.name) of a variable.
+    variableName: t(name),
+    /// A type [name](#highlight.tags.name).
     typeName: typeName,
-    /**
-    A tag name (subtag of [`typeName`](https://codemirror.net/6/docs/ref/#highlight.tags.typeName)).
-    */
-    tagName: /*@__PURE__*/t(typeName),
-    /**
-    A property, field, or attribute [name](https://codemirror.net/6/docs/ref/#highlight.tags.name).
-    */
-    propertyName: /*@__PURE__*/t(name),
-    /**
-    The [name](https://codemirror.net/6/docs/ref/#highlight.tags.name) of a class.
-    */
-    className: /*@__PURE__*/t(name),
-    /**
-    A label [name](https://codemirror.net/6/docs/ref/#highlight.tags.name).
-    */
-    labelName: /*@__PURE__*/t(name),
-    /**
-    A namespace [name](https://codemirror.net/6/docs/ref/#highlight.tags.name).
-    */
-    namespace: /*@__PURE__*/t(name),
-    /**
-    The [name](https://codemirror.net/6/docs/ref/#highlight.tags.name) of a macro.
-    */
-    macroName: /*@__PURE__*/t(name),
-    /**
-    A literal value.
-    */
+    /// A tag name (subtag of [`typeName`](#highlight.tags.typeName)).
+    tagName: t(typeName),
+    /// A property, field, or attribute [name](#highlight.tags.name).
+    propertyName: t(name),
+    /// The [name](#highlight.tags.name) of a class.
+    className: t(name),
+    /// A label [name](#highlight.tags.name).
+    labelName: t(name),
+    /// A namespace [name](#highlight.tags.name).
+    namespace: t(name),
+    /// The [name](#highlight.tags.name) of a macro.
+    macroName: t(name),
+    /// A literal value.
     literal,
-    /**
-    A string [literal](https://codemirror.net/6/docs/ref/#highlight.tags.literal).
-    */
+    /// A string [literal](#highlight.tags.literal).
     string,
-    /**
-    A documentation [string](https://codemirror.net/6/docs/ref/#highlight.tags.string).
-    */
-    docString: /*@__PURE__*/t(string),
-    /**
-    A character literal (subtag of [string](https://codemirror.net/6/docs/ref/#highlight.tags.string)).
-    */
-    character: /*@__PURE__*/t(string),
-    /**
-    A number [literal](https://codemirror.net/6/docs/ref/#highlight.tags.literal).
-    */
+    /// A documentation [string](#highlight.tags.string).
+    docString: t(string),
+    /// A character literal (subtag of [string](#highlight.tags.string)).
+    character: t(string),
+    /// A number [literal](#highlight.tags.literal).
     number,
-    /**
-    An integer [number](https://codemirror.net/6/docs/ref/#highlight.tags.number) literal.
-    */
-    integer: /*@__PURE__*/t(number),
-    /**
-    A floating-point [number](https://codemirror.net/6/docs/ref/#highlight.tags.number) literal.
-    */
-    float: /*@__PURE__*/t(number),
-    /**
-    A boolean [literal](https://codemirror.net/6/docs/ref/#highlight.tags.literal).
-    */
-    bool: /*@__PURE__*/t(literal),
-    /**
-    Regular expression [literal](https://codemirror.net/6/docs/ref/#highlight.tags.literal).
-    */
-    regexp: /*@__PURE__*/t(literal),
-    /**
-    An escape [literal](https://codemirror.net/6/docs/ref/#highlight.tags.literal), for example a
-    backslash escape in a string.
-    */
-    escape: /*@__PURE__*/t(literal),
-    /**
-    A color [literal](https://codemirror.net/6/docs/ref/#highlight.tags.literal).
-    */
-    color: /*@__PURE__*/t(literal),
-    /**
-    A URL [literal](https://codemirror.net/6/docs/ref/#highlight.tags.literal).
-    */
-    url: /*@__PURE__*/t(literal),
-    /**
-    A language keyword.
-    */
+    /// An integer [number](#highlight.tags.number) literal.
+    integer: t(number),
+    /// A floating-point [number](#highlight.tags.number) literal.
+    float: t(number),
+    /// A boolean [literal](#highlight.tags.literal).
+    bool: t(literal),
+    /// Regular expression [literal](#highlight.tags.literal).
+    regexp: t(literal),
+    /// An escape [literal](#highlight.tags.literal), for example a
+    /// backslash escape in a string.
+    escape: t(literal),
+    /// A color [literal](#highlight.tags.literal).
+    color: t(literal),
+    /// A URL [literal](#highlight.tags.literal).
+    url: t(literal),
+    /// A language keyword.
     keyword,
-    /**
-    The [keyword](https://codemirror.net/6/docs/ref/#highlight.tags.keyword) for the self or this
-    object.
-    */
-    self: /*@__PURE__*/t(keyword),
-    /**
-    The [keyword](https://codemirror.net/6/docs/ref/#highlight.tags.keyword) for null.
-    */
-    null: /*@__PURE__*/t(keyword),
-    /**
-    A [keyword](https://codemirror.net/6/docs/ref/#highlight.tags.keyword) denoting some atomic value.
-    */
-    atom: /*@__PURE__*/t(keyword),
-    /**
-    A [keyword](https://codemirror.net/6/docs/ref/#highlight.tags.keyword) that represents a unit.
-    */
-    unit: /*@__PURE__*/t(keyword),
-    /**
-    A modifier [keyword](https://codemirror.net/6/docs/ref/#highlight.tags.keyword).
-    */
-    modifier: /*@__PURE__*/t(keyword),
-    /**
-    A [keyword](https://codemirror.net/6/docs/ref/#highlight.tags.keyword) that acts as an operator.
-    */
-    operatorKeyword: /*@__PURE__*/t(keyword),
-    /**
-    A control-flow related [keyword](https://codemirror.net/6/docs/ref/#highlight.tags.keyword).
-    */
-    controlKeyword: /*@__PURE__*/t(keyword),
-    /**
-    A [keyword](https://codemirror.net/6/docs/ref/#highlight.tags.keyword) that defines something.
-    */
-    definitionKeyword: /*@__PURE__*/t(keyword),
-    /**
-    An operator.
-    */
+    /// The [keyword](#highlight.tags.keyword) for the self or this
+    /// object.
+    self: t(keyword),
+    /// The [keyword](#highlight.tags.keyword) for null.
+    null: t(keyword),
+    /// A [keyword](#highlight.tags.keyword) denoting some atomic value.
+    atom: t(keyword),
+    /// A [keyword](#highlight.tags.keyword) that represents a unit.
+    unit: t(keyword),
+    /// A modifier [keyword](#highlight.tags.keyword).
+    modifier: t(keyword),
+    /// A [keyword](#highlight.tags.keyword) that acts as an operator.
+    operatorKeyword: t(keyword),
+    /// A control-flow related [keyword](#highlight.tags.keyword).
+    controlKeyword: t(keyword),
+    /// A [keyword](#highlight.tags.keyword) that defines something.
+    definitionKeyword: t(keyword),
+    /// An operator.
     operator,
-    /**
-    An [operator](https://codemirror.net/6/docs/ref/#highlight.tags.operator) that defines something.
-    */
-    derefOperator: /*@__PURE__*/t(operator),
-    /**
-    Arithmetic-related [operator](https://codemirror.net/6/docs/ref/#highlight.tags.operator).
-    */
-    arithmeticOperator: /*@__PURE__*/t(operator),
-    /**
-    Logical [operator](https://codemirror.net/6/docs/ref/#highlight.tags.operator).
-    */
-    logicOperator: /*@__PURE__*/t(operator),
-    /**
-    Bit [operator](https://codemirror.net/6/docs/ref/#highlight.tags.operator).
-    */
-    bitwiseOperator: /*@__PURE__*/t(operator),
-    /**
-    Comparison [operator](https://codemirror.net/6/docs/ref/#highlight.tags.operator).
-    */
-    compareOperator: /*@__PURE__*/t(operator),
-    /**
-    [Operator](https://codemirror.net/6/docs/ref/#highlight.tags.operator) that updates its operand.
-    */
-    updateOperator: /*@__PURE__*/t(operator),
-    /**
-    [Operator](https://codemirror.net/6/docs/ref/#highlight.tags.operator) that defines something.
-    */
-    definitionOperator: /*@__PURE__*/t(operator),
-    /**
-    Type-related [operator](https://codemirror.net/6/docs/ref/#highlight.tags.operator).
-    */
-    typeOperator: /*@__PURE__*/t(operator),
-    /**
-    Control-flow [operator](https://codemirror.net/6/docs/ref/#highlight.tags.operator).
-    */
-    controlOperator: /*@__PURE__*/t(operator),
-    /**
-    Program or markup punctuation.
-    */
+    /// An [operator](#highlight.tags.operator) that defines something.
+    derefOperator: t(operator),
+    /// Arithmetic-related [operator](#highlight.tags.operator).
+    arithmeticOperator: t(operator),
+    /// Logical [operator](#highlight.tags.operator).
+    logicOperator: t(operator),
+    /// Bit [operator](#highlight.tags.operator).
+    bitwiseOperator: t(operator),
+    /// Comparison [operator](#highlight.tags.operator).
+    compareOperator: t(operator),
+    /// [Operator](#highlight.tags.operator) that updates its operand.
+    updateOperator: t(operator),
+    /// [Operator](#highlight.tags.operator) that defines something.
+    definitionOperator: t(operator),
+    /// Type-related [operator](#highlight.tags.operator).
+    typeOperator: t(operator),
+    /// Control-flow [operator](#highlight.tags.operator).
+    controlOperator: t(operator),
+    /// Program or markup punctuation.
     punctuation,
-    /**
-    [Punctuation](https://codemirror.net/6/docs/ref/#highlight.tags.punctuation) that separates
-    things.
-    */
-    separator: /*@__PURE__*/t(punctuation),
-    /**
-    Bracket-style [punctuation](https://codemirror.net/6/docs/ref/#highlight.tags.punctuation).
-    */
+    /// [Punctuation](#highlight.tags.punctuation) that separates
+    /// things.
+    separator: t(punctuation),
+    /// Bracket-style [punctuation](#highlight.tags.punctuation).
     bracket,
-    /**
-    Angle [brackets](https://codemirror.net/6/docs/ref/#highlight.tags.bracket) (usually `<` and `>`
-    tokens).
-    */
-    angleBracket: /*@__PURE__*/t(bracket),
-    /**
-    Square [brackets](https://codemirror.net/6/docs/ref/#highlight.tags.bracket) (usually `[` and `]`
-    tokens).
-    */
-    squareBracket: /*@__PURE__*/t(bracket),
-    /**
-    Parentheses (usually `(` and `)` tokens). Subtag of
-    [bracket](https://codemirror.net/6/docs/ref/#highlight.tags.bracket).
-    */
-    paren: /*@__PURE__*/t(bracket),
-    /**
-    Braces (usually `{` and `}` tokens). Subtag of
-    [bracket](https://codemirror.net/6/docs/ref/#highlight.tags.bracket).
-    */
-    brace: /*@__PURE__*/t(bracket),
-    /**
-    Content, for example plain text in XML or markup documents.
-    */
+    /// Angle [brackets](#highlight.tags.bracket) (usually `<` and `>`
+    /// tokens).
+    angleBracket: t(bracket),
+    /// Square [brackets](#highlight.tags.bracket) (usually `[` and `]`
+    /// tokens).
+    squareBracket: t(bracket),
+    /// Parentheses (usually `(` and `)` tokens). Subtag of
+    /// [bracket](#highlight.tags.bracket).
+    paren: t(bracket),
+    /// Braces (usually `{` and `}` tokens). Subtag of
+    /// [bracket](#highlight.tags.bracket).
+    brace: t(bracket),
+    /// Content, for example plain text in XML or markup documents.
     content,
-    /**
-    [Content](https://codemirror.net/6/docs/ref/#highlight.tags.content) that represents a heading.
-    */
+    /// [Content](#highlight.tags.content) that represents a heading.
     heading,
-    /**
-    A level 1 [heading](https://codemirror.net/6/docs/ref/#highlight.tags.heading).
-    */
-    heading1: /*@__PURE__*/t(heading),
-    /**
-    A level 2 [heading](https://codemirror.net/6/docs/ref/#highlight.tags.heading).
-    */
-    heading2: /*@__PURE__*/t(heading),
-    /**
-    A level 3 [heading](https://codemirror.net/6/docs/ref/#highlight.tags.heading).
-    */
-    heading3: /*@__PURE__*/t(heading),
-    /**
-    A level 4 [heading](https://codemirror.net/6/docs/ref/#highlight.tags.heading).
-    */
-    heading4: /*@__PURE__*/t(heading),
-    /**
-    A level 5 [heading](https://codemirror.net/6/docs/ref/#highlight.tags.heading).
-    */
-    heading5: /*@__PURE__*/t(heading),
-    /**
-    A level 6 [heading](https://codemirror.net/6/docs/ref/#highlight.tags.heading).
-    */
-    heading6: /*@__PURE__*/t(heading),
-    /**
-    A prose separator (such as a horizontal rule).
-    */
-    contentSeparator: /*@__PURE__*/t(content),
-    /**
-    [Content](https://codemirror.net/6/docs/ref/#highlight.tags.content) that represents a list.
-    */
-    list: /*@__PURE__*/t(content),
-    /**
-    [Content](https://codemirror.net/6/docs/ref/#highlight.tags.content) that represents a quote.
-    */
-    quote: /*@__PURE__*/t(content),
-    /**
-    [Content](https://codemirror.net/6/docs/ref/#highlight.tags.content) that is emphasized.
-    */
-    emphasis: /*@__PURE__*/t(content),
-    /**
-    [Content](https://codemirror.net/6/docs/ref/#highlight.tags.content) that is styled strong.
-    */
-    strong: /*@__PURE__*/t(content),
-    /**
-    [Content](https://codemirror.net/6/docs/ref/#highlight.tags.content) that is part of a link.
-    */
-    link: /*@__PURE__*/t(content),
-    /**
-    [Content](https://codemirror.net/6/docs/ref/#highlight.tags.content) that is styled as code or
-    monospace.
-    */
-    monospace: /*@__PURE__*/t(content),
-    /**
-    [Content](https://codemirror.net/6/docs/ref/#highlight.tags.content) that has a strike-through
-    style.
-    */
-    strikethrough: /*@__PURE__*/t(content),
-    /**
-    Inserted text in a change-tracking format.
-    */
-    inserted: /*@__PURE__*/t(),
-    /**
-    Deleted text.
-    */
-    deleted: /*@__PURE__*/t(),
-    /**
-    Changed text.
-    */
-    changed: /*@__PURE__*/t(),
-    /**
-    An invalid or unsyntactic element.
-    */
-    invalid: /*@__PURE__*/t(),
-    /**
-    Metadata or meta-instruction.
-    */
+    /// A level 1 [heading](#highlight.tags.heading).
+    heading1: t(heading),
+    /// A level 2 [heading](#highlight.tags.heading).
+    heading2: t(heading),
+    /// A level 3 [heading](#highlight.tags.heading).
+    heading3: t(heading),
+    /// A level 4 [heading](#highlight.tags.heading).
+    heading4: t(heading),
+    /// A level 5 [heading](#highlight.tags.heading).
+    heading5: t(heading),
+    /// A level 6 [heading](#highlight.tags.heading).
+    heading6: t(heading),
+    /// A prose separator (such as a horizontal rule).
+    contentSeparator: t(content),
+    /// [Content](#highlight.tags.content) that represents a list.
+    list: t(content),
+    /// [Content](#highlight.tags.content) that represents a quote.
+    quote: t(content),
+    /// [Content](#highlight.tags.content) that is emphasized.
+    emphasis: t(content),
+    /// [Content](#highlight.tags.content) that is styled strong.
+    strong: t(content),
+    /// [Content](#highlight.tags.content) that is part of a link.
+    link: t(content),
+    /// [Content](#highlight.tags.content) that is styled as code or
+    /// monospace.
+    monospace: t(content),
+    /// Inserted text in a change-tracking format.
+    inserted: t(),
+    /// Deleted text.
+    deleted: t(),
+    /// Changed text.
+    changed: t(),
+    /// An invalid or unsyntactic element.
+    invalid: t(),
+    /// Metadata or meta-instruction.
     meta,
-    /**
-    [Metadata](https://codemirror.net/6/docs/ref/#highlight.tags.meta) that applies to the entire
-    document.
-    */
-    documentMeta: /*@__PURE__*/t(meta),
-    /**
-    [Metadata](https://codemirror.net/6/docs/ref/#highlight.tags.meta) that annotates or adds
-    attributes to a given syntactic element.
-    */
-    annotation: /*@__PURE__*/t(meta),
-    /**
-    Processing instruction or preprocessor directive. Subtag of
-    [meta](https://codemirror.net/6/docs/ref/#highlight.tags.meta).
-    */
-    processingInstruction: /*@__PURE__*/t(meta),
-    /**
-    [Modifier](https://codemirror.net/6/docs/ref/#highlight.Tag^defineModifier) that indicates that a
-    given element is being defined. Expected to be used with the
-    various [name](https://codemirror.net/6/docs/ref/#highlight.tags.name) tags.
-    */
-    definition: /*@__PURE__*/Tag.defineModifier(),
-    /**
-    [Modifier](https://codemirror.net/6/docs/ref/#highlight.Tag^defineModifier) that indicates that
-    something is constant. Mostly expected to be used with
-    [variable names](https://codemirror.net/6/docs/ref/#highlight.tags.variableName).
-    */
-    constant: /*@__PURE__*/Tag.defineModifier(),
-    /**
-    [Modifier](https://codemirror.net/6/docs/ref/#highlight.Tag^defineModifier) used to indicate that
-    a [variable](https://codemirror.net/6/docs/ref/#highlight.tags.variableName) or [property
-    name](https://codemirror.net/6/docs/ref/#highlight.tags.propertyName) is being called or defined
-    as a function.
-    */
-    function: /*@__PURE__*/Tag.defineModifier(),
-    /**
-    [Modifier](https://codemirror.net/6/docs/ref/#highlight.Tag^defineModifier) that can be applied to
-    [names](https://codemirror.net/6/docs/ref/#highlight.tags.name) to indicate that they belong to
-    the language's standard environment.
-    */
-    standard: /*@__PURE__*/Tag.defineModifier(),
-    /**
-    [Modifier](https://codemirror.net/6/docs/ref/#highlight.Tag^defineModifier) that indicates a given
-    [names](https://codemirror.net/6/docs/ref/#highlight.tags.name) is local to some scope.
-    */
-    local: /*@__PURE__*/Tag.defineModifier(),
-    /**
-    A generic variant [modifier](https://codemirror.net/6/docs/ref/#highlight.Tag^defineModifier) that
-    can be used to tag language-specific alternative variants of
-    some common tag. It is recommended for themes to define special
-    forms of at least the [string](https://codemirror.net/6/docs/ref/#highlight.tags.string) and
-    [variable name](https://codemirror.net/6/docs/ref/#highlight.tags.variableName) tags, since those
-    come up a lot.
-    */
-    special: /*@__PURE__*/Tag.defineModifier()
+    /// [Metadata](#highlight.tags.meta) that applies to the entire
+    /// document.
+    documentMeta: t(meta),
+    /// [Metadata](#highlight.tags.meta) that annotates or adds
+    /// attributes to a given syntactic element.
+    annotation: t(meta),
+    /// Processing instruction or preprocessor directive. Subtag of
+    /// [meta](#highlight.tags.meta).
+    processingInstruction: t(meta),
+    /// [Modifier](#highlight.Tag^defineModifier) that indicates that a
+    /// given element is being defined. Expected to be used with the
+    /// various [name](#highlight.tags.name) tags.
+    definition: Tag.defineModifier(),
+    /// [Modifier](#highlight.Tag^defineModifier) that indicates that
+    /// something is constant. Mostly expected to be used with
+    /// [variable names](#highlight.tags.variableName).
+    constant: Tag.defineModifier(),
+    /// [Modifier](#highlight.Tag^defineModifier) used to indicate that
+    /// a [variable](#highlight.tags.variableName) or [property
+    /// name](#highlight.tags.propertyName) is being called or defined
+    /// as a function.
+    function: Tag.defineModifier(),
+    /// [Modifier](#highlight.Tag^defineModifier) that can be applied to
+    /// [names](#highlight.tags.name) to indicate that they belong to
+    /// the language's standard environment.
+    standard: Tag.defineModifier(),
+    /// [Modifier](#highlight.Tag^defineModifier) that indicates a given
+    /// [names](#highlight.tags.name) is local to some scope.
+    local: Tag.defineModifier(),
+    /// A generic variant [modifier](#highlight.Tag^defineModifier) that
+    /// can be used to tag language-specific alternative variants of
+    /// some common tag. It is recommended for themes to define special
+    /// forms of at least the [string](#highlight.tags.string) and
+    /// [variable name](#highlight.tags.variableName) tags, since those
+    /// come up a lot.
+    special: Tag.defineModifier()
 };
-/**
-A default highlight style (works well with light themes).
-*/
-const defaultHighlightStyle = /*@__PURE__*/HighlightStyle.define([
+/// A default highlight style (works well with light themes).
+const defaultHighlightStyle = HighlightStyle.define([
     { tag: tags.link,
         textDecoration: "underline" },
     { tag: tags.heading,
@@ -13170,8 +12950,6 @@ const defaultHighlightStyle = /*@__PURE__*/HighlightStyle.define([
         fontStyle: "italic" },
     { tag: tags.strong,
         fontWeight: "bold" },
-    { tag: tags.strikethrough,
-        textDecoration: "line-through" },
     { tag: tags.keyword,
         color: "#708" },
     { tag: [tags.atom, tags.bool, tags.url, tags.contentSeparator, tags.labelName],
@@ -13180,19 +12958,19 @@ const defaultHighlightStyle = /*@__PURE__*/HighlightStyle.define([
         color: "#164" },
     { tag: [tags.string, tags.deleted],
         color: "#a11" },
-    { tag: [tags.regexp, tags.escape, /*@__PURE__*/tags.special(tags.string)],
+    { tag: [tags.regexp, tags.escape, tags.special(tags.string)],
         color: "#e40" },
-    { tag: /*@__PURE__*/tags.definition(tags.variableName),
+    { tag: tags.definition(tags.variableName),
         color: "#00f" },
-    { tag: /*@__PURE__*/tags.local(tags.variableName),
+    { tag: tags.local(tags.variableName),
         color: "#30a" },
     { tag: [tags.typeName, tags.namespace],
         color: "#085" },
     { tag: tags.className,
         color: "#167" },
-    { tag: [/*@__PURE__*/tags.special(tags.variableName), tags.macroName],
+    { tag: [tags.special(tags.variableName), tags.macroName],
         color: "#256" },
-    { tag: /*@__PURE__*/tags.definition(tags.propertyName),
+    { tag: tags.definition(tags.propertyName),
         color: "#00c" },
     { tag: tags.comment,
         color: "#940" },
@@ -13200,6 +12978,78 @@ const defaultHighlightStyle = /*@__PURE__*/HighlightStyle.define([
         color: "#7a757a" },
     { tag: tags.invalid,
         color: "#f00" }
+]);
+/// This is a highlight style that adds stable, predictable classes to
+/// tokens, for styling with external CSS.
+///
+/// These tags are mapped to their name prefixed with `"cmt-"` (for
+/// example `"cmt-comment"`):
+///
+/// * [`link`](#highlight.tags.link)
+/// * [`heading`](#highlight.tags.heading)
+/// * [`emphasis`](#highlight.tags.emphasis)
+/// * [`strong`](#highlight.tags.strong)
+/// * [`keyword`](#highlight.tags.keyword)
+/// * [`atom`](#highlight.tags.atom) [`bool`](#highlight.tags.bool)
+/// * [`url`](#highlight.tags.url)
+/// * [`labelName`](#highlight.tags.labelName)
+/// * [`inserted`](#highlight.tags.inserted)
+/// * [`deleted`](#highlight.tags.deleted)
+/// * [`literal`](#highlight.tags.literal)
+/// * [`string`](#highlight.tags.string)
+/// * [`number`](#highlight.tags.number)
+/// * [`variableName`](#highlight.tags.variableName)
+/// * [`typeName`](#highlight.tags.typeName)
+/// * [`namespace`](#highlight.tags.namespace)
+/// * [`macroName`](#highlight.tags.macroName)
+/// * [`propertyName`](#highlight.tags.propertyName)
+/// * [`operator`](#highlight.tags.operator)
+/// * [`comment`](#highlight.tags.comment)
+/// * [`meta`](#highlight.tags.meta)
+/// * [`punctuation`](#highlight.tags.puncutation)
+/// * [`invalid`](#highlight.tags.invalid)
+///
+/// In addition, these mappings are provided:
+///
+/// * [`regexp`](#highlight.tags.regexp),
+///   [`escape`](#highlight.tags.escape), and
+///   [`special`](#highlight.tags.special)[`(string)`](#highlight.tags.string)
+///   are mapped to `"cmt-string2"`
+/// * [`special`](#highlight.tags.special)[`(variableName)`](#highlight.tags.variableName)
+///   to `"cmt-variableName2"`
+/// * [`local`](#highlight.tags.local)[`(variableName)`](#highlight.tags.variableName)
+///   to `"cmt-variableName cmt-local"`
+/// * [`definition`](#highlight.tags.definition)[`(variableName)`](#highlight.tags.variableName)
+///   to `"cmt-variableName cmt-definition"`
+HighlightStyle.define([
+    { tag: tags.link, class: "cmt-link" },
+    { tag: tags.heading, class: "cmt-heading" },
+    { tag: tags.emphasis, class: "cmt-emphasis" },
+    { tag: tags.strong, class: "cmt-strong" },
+    { tag: tags.keyword, class: "cmt-keyword" },
+    { tag: tags.atom, class: "cmt-atom" },
+    { tag: tags.bool, class: "cmt-bool" },
+    { tag: tags.url, class: "cmt-url" },
+    { tag: tags.labelName, class: "cmt-labelName" },
+    { tag: tags.inserted, class: "cmt-inserted" },
+    { tag: tags.deleted, class: "cmt-deleted" },
+    { tag: tags.literal, class: "cmt-literal" },
+    { tag: tags.string, class: "cmt-string" },
+    { tag: tags.number, class: "cmt-number" },
+    { tag: [tags.regexp, tags.escape, tags.special(tags.string)], class: "cmt-string2" },
+    { tag: tags.variableName, class: "cmt-variableName" },
+    { tag: tags.local(tags.variableName), class: "cmt-variableName cmt-local" },
+    { tag: tags.definition(tags.variableName), class: "cmt-variableName cmt-definition" },
+    { tag: tags.special(tags.variableName), class: "cmt-variableName2" },
+    { tag: tags.typeName, class: "cmt-typeName" },
+    { tag: tags.namespace, class: "cmt-namespace" },
+    { tag: tags.macroName, class: "cmt-macroName" },
+    { tag: tags.propertyName, class: "cmt-propertyName" },
+    { tag: tags.operator, class: "cmt-operator" },
+    { tag: tags.comment, class: "cmt-comment" },
+    { tag: tags.meta, class: "cmt-meta" },
+    { tag: tags.invalid, class: "cmt-invalid" },
+    { tag: tags.punctuation, class: "cmt-punctuation" }
 ]);
 
 // Counts the column offset in a string, taking tabs into account.
@@ -17300,7 +17150,7 @@ const completionKeymap = [
 ];
 const completionKeymapExt = /*@__PURE__*/Prec.override(/*@__PURE__*/keymap.computeN([completionConfig], state => state.facet(completionConfig).defaultKeymap ? [completionKeymap] : []));
 
-const panelConfig = /*@__PURE__*/Facet.define({
+const panelConfig = Facet.define({
     combine(configs) {
         let topContainer, bottomContainer;
         for (let c of configs) {
@@ -17320,7 +17170,7 @@ function getPanel(view, panel) {
     let index = plugin ? plugin.specs.indexOf(panel) : -1;
     return index > -1 ? plugin.panels[index] : null;
 }
-const panelPlugin = /*@__PURE__*/ViewPlugin.fromClass(class {
+const panelPlugin = ViewPlugin.fromClass(class {
     constructor(view) {
         this.input = view.state.facet(showPanel);
         this.specs = this.input.filter(s => s);
@@ -17393,7 +17243,7 @@ const panelPlugin = /*@__PURE__*/ViewPlugin.fromClass(class {
         this.bottom.sync([]);
     }
 }, {
-    provide: /*@__PURE__*/PluginField.scrollMargins.from(value => ({ top: value.top.scrollMargin(), bottom: value.bottom.scrollMargin() }))
+    provide: PluginField.scrollMargins.from(value => ({ top: value.top.scrollMargin(), bottom: value.bottom.scrollMargin() }))
 });
 class PanelGroup {
     constructor(view, top, container) {
@@ -17440,9 +17290,8 @@ class PanelGroup {
     }
     scrollMargin() {
         return !this.dom || this.container ? 0
-            : Math.max(0, this.top ?
-                this.dom.getBoundingClientRect().bottom - Math.max(0, this.view.scrollDOM.getBoundingClientRect().top) :
-                Math.min(innerHeight, this.view.scrollDOM.getBoundingClientRect().bottom) - this.dom.getBoundingClientRect().top);
+            : Math.max(0, this.top ? this.dom.getBoundingClientRect().bottom - this.view.scrollDOM.getBoundingClientRect().top
+                : this.view.scrollDOM.getBoundingClientRect().bottom - this.dom.getBoundingClientRect().top);
     }
     syncClasses() {
         if (!this.container || this.classes == this.view.themeClasses)
@@ -17460,7 +17309,7 @@ function rm(node) {
     node.remove();
     return next;
 }
-const baseTheme$2 = /*@__PURE__*/EditorView.baseTheme({
+const baseTheme$2 = EditorView.baseTheme({
     ".cm-panels": {
         boxSizing: "border-box",
         position: "sticky",
@@ -17487,7 +17336,7 @@ Opening a panel is done by providing a constructor function for
 the panel through this facet. (The panel is closed again when its
 constructor is no longer provided.) Values of `null` are ignored.
 */
-const showPanel = /*@__PURE__*/Facet.define({
+const showPanel = Facet.define({
     enables: [panelPlugin, baseTheme$2]
 });
 
@@ -17637,32 +17486,13 @@ class SearchCursor {
     }
 }
 
-const empty = { from: -1, to: -1, match: /*@__PURE__*//.*/.exec("") };
+const empty = { from: -1, to: -1, match: /.*/.exec("") };
 const baseFlags = "gm" + (/x/.unicode == null ? "" : "u");
-/**
-This class is similar to [`SearchCursor`](https://codemirror.net/6/docs/ref/#search.SearchCursor)
-but searches for a regular expression pattern instead of a plain
-string.
-*/
 class RegExpCursor {
-    /**
-    Create a cursor that will search the given range in the given
-    document. `query` should be the raw pattern (as you'd pass it to
-    `new RegExp`).
-    */
     constructor(text, query, options, from = 0, to = text.length) {
         this.to = to;
         this.curLine = "";
-        /**
-        Set to `true` when the cursor has reached the end of the search
-        range.
-        */
         this.done = false;
-        /**
-        Will contain an object with the extent of the match and the
-        match object when [`next`](https://codemirror.net/6/docs/ref/#search.RegExpCursor.next)
-        sucessfully finds a match.
-        */
         this.value = empty;
         if (/\\[sWDnr]|\n|\r|\[\^/.test(query))
             return new MultilineRegExpCursor(text, query, options, from, to);
@@ -17692,9 +17522,6 @@ class RegExpCursor {
         else
             this.getLine(0);
     }
-    /**
-    Move to the next match, if there is one.
-    */
     next() {
         for (let off = this.matchPos - this.curLineStart;;) {
             this.re.lastIndex = off;
@@ -17721,7 +17548,7 @@ class RegExpCursor {
         }
     }
 }
-const flattened = /*@__PURE__*/new WeakMap();
+const flattened = new WeakMap();
 // Reusable (partially) flattened document strings
 class FlattenedDoc {
     constructor(from, text) {
@@ -17849,8 +17676,8 @@ function createLineDialog(view) {
     }
     return { dom, pos: -10 };
 }
-const dialogEffect = /*@__PURE__*/StateEffect.define();
-const dialogField = /*@__PURE__*/StateField.define({
+const dialogEffect = StateEffect.define();
+const dialogField = StateField.define({
     create() { return true; },
     update(value, tr) {
         for (let e of tr.effects)
@@ -17885,7 +17712,7 @@ const gotoLine = view => {
         panel.dom.querySelector("input").focus();
     return true;
 };
-const baseTheme$1 = /*@__PURE__*/EditorView.baseTheme({
+const baseTheme$1 = EditorView.baseTheme({
     ".cm-panel.cm-gotoLine": {
         padding: "2px 6px 4px",
         "& label": { fontSize: "80%" }
@@ -17897,7 +17724,7 @@ const defaultHighlightOptions = {
     minSelectionLength: 1,
     maxMatches: 100
 };
-const highlightConfig = /*@__PURE__*/Facet.define({
+const highlightConfig = Facet.define({
     combine(options) {
         return combineConfig(options, defaultHighlightOptions, {
             highlightWordAroundCursor: (a, b) => a || b,
@@ -17918,9 +17745,26 @@ function highlightSelectionMatches(options) {
         ext.push(highlightConfig.of(options));
     return ext;
 }
-const matchDeco = /*@__PURE__*/Decoration.mark({ class: "cm-selectionMatch" });
-const mainMatchDeco = /*@__PURE__*/Decoration.mark({ class: "cm-selectionMatch cm-selectionMatch-main" });
-const matchHighlighter = /*@__PURE__*/ViewPlugin.fromClass(class {
+function wordAt(doc, pos, check) {
+    let line = doc.lineAt(pos);
+    let from = pos - line.from, to = pos - line.from;
+    while (from > 0) {
+        let prev = findClusterBreak(line.text, from, false);
+        if (check(line.text.slice(prev, from)) != CharCategory.Word)
+            break;
+        from = prev;
+    }
+    while (to < line.length) {
+        let next = findClusterBreak(line.text, to);
+        if (check(line.text.slice(to, next)) != CharCategory.Word)
+            break;
+        to = next;
+    }
+    return from == to ? null : line.text.slice(from, to);
+}
+const matchDeco = Decoration.mark({ class: "cm-selectionMatch" });
+const mainMatchDeco = Decoration.mark({ class: "cm-selectionMatch cm-selectionMatch-main" });
+const matchHighlighter = ViewPlugin.fromClass(class {
     constructor(view) {
         this.decorations = this.getDeco(view);
     }
@@ -17937,11 +17781,10 @@ const matchHighlighter = /*@__PURE__*/ViewPlugin.fromClass(class {
         if (range.empty) {
             if (!conf.highlightWordAroundCursor)
                 return Decoration.none;
-            let word = state.wordAt(range.head);
-            if (!word)
-                return Decoration.none;
             check = state.charCategorizer(range.head);
-            query = state.sliceDoc(word.from, word.to);
+            query = wordAt(state.doc, range.head, check);
+            if (!query)
+                return Decoration.none;
         }
         else {
             let len = range.to - range.from;
@@ -17972,53 +17815,10 @@ const matchHighlighter = /*@__PURE__*/ViewPlugin.fromClass(class {
 }, {
     decorations: v => v.decorations
 });
-const defaultTheme = /*@__PURE__*/EditorView.baseTheme({
+const defaultTheme = EditorView.baseTheme({
     ".cm-selectionMatch": { backgroundColor: "#99ff7780" },
     ".cm-searchMatch .cm-selectionMatch": { backgroundColor: "transparent" }
 });
-// Select the words around the cursors.
-const selectWord = ({ state, dispatch }) => {
-    let { selection } = state;
-    let newSel = EditorSelection.create(selection.ranges.map(range => state.wordAt(range.head) || EditorSelection.cursor(range.head)), selection.mainIndex);
-    if (newSel.eq(selection))
-        return false;
-    dispatch(state.update({ selection: newSel }));
-    return true;
-};
-// Find next occurrence of query relative to last cursor. Wrap around
-// the document if there are no more matches.
-function findNextOccurrence(state, query) {
-    let { ranges } = state.selection;
-    let ahead = new SearchCursor(state.doc, query, ranges[ranges.length - 1].to).next();
-    if (!ahead.done)
-        return ahead.value;
-    let cursor = new SearchCursor(state.doc, query, 0, Math.max(0, ranges[ranges.length - 1].from - 1));
-    while (!cursor.next().done) {
-        if (!ranges.some(r => r.from === cursor.value.from))
-            return cursor.value;
-    }
-    return null;
-}
-/**
-Select next occurrence of the current selection.
-Expand selection to the word when selection range is empty.
-*/
-const selectNextOccurrence = ({ state, dispatch }) => {
-    let { ranges } = state.selection;
-    if (ranges.some(sel => sel.from === sel.to))
-        return selectWord({ state, dispatch });
-    let searchedText = state.sliceDoc(ranges[0].from, ranges[0].to);
-    if (state.selection.ranges.some(r => state.sliceDoc(r.from, r.to) != searchedText))
-        return false;
-    let range = findNextOccurrence(state, searchedText);
-    if (!range)
-        return false;
-    dispatch(state.update({
-        selection: state.selection.addRange(EditorSelection.range(range.from, range.to)),
-        scrollIntoView: true
-    }));
-    return true;
-};
 
 class Query {
     constructor(search, replace, caseInsensitive) {
@@ -18132,11 +17932,11 @@ class RegExpQuery extends Query {
             add(cursor.value.from, cursor.value.to);
     }
 }
-const setQuery = /*@__PURE__*/StateEffect.define();
-const togglePanel = /*@__PURE__*/StateEffect.define();
-const searchState = /*@__PURE__*/StateField.define({
+const setQuery = StateEffect.define();
+const togglePanel = StateEffect.define();
+const searchState = StateField.define({
     create() {
-        return new SearchState(new StringQuery("", "", false), createSearchPanel);
+        return new SearchState(new StringQuery("", "", false), null);
     },
     update(value, tr) {
         for (let effect of tr.effects) {
@@ -18155,8 +17955,8 @@ class SearchState {
         this.panel = panel;
     }
 }
-const matchMark = /*@__PURE__*/Decoration.mark({ class: "cm-searchMatch" }), selectedMatchMark = /*@__PURE__*/Decoration.mark({ class: "cm-searchMatch cm-searchMatch-selected" });
-const searchHighlighter = /*@__PURE__*/ViewPlugin.fromClass(class {
+const matchMark = Decoration.mark({ class: "cm-searchMatch" }), selectedMatchMark = Decoration.mark({ class: "cm-searchMatch cm-searchMatch-selected" });
+const searchHighlighter = ViewPlugin.fromClass(class {
     constructor(view) {
         this.view = view;
         this.decorations = this.highlight(view.state.field(searchState));
@@ -18197,7 +17997,7 @@ selection to the first match after the current main selection.
 Will wrap around to the start of the document when it reaches the
 end.
 */
-const findNext = /*@__PURE__*/searchCommand((view, { query }) => {
+const findNext = searchCommand((view, { query }) => {
     let { from, to } = view.state.selection.main;
     let next = query.nextMatch(view.state.doc, from, to);
     if (!next || next.from == from && next.to == to)
@@ -18214,7 +18014,7 @@ Move the selection to the previous instance of the search query,
 before the current main selection. Will wrap past the start
 of the document to start searching at the end again.
 */
-const findPrevious = /*@__PURE__*/searchCommand((view, { query }) => {
+const findPrevious = searchCommand((view, { query }) => {
     let { state } = view, { from, to } = state.selection.main;
     let range = query.prevMatch(state.doc, from, to);
     if (!range)
@@ -18229,7 +18029,7 @@ const findPrevious = /*@__PURE__*/searchCommand((view, { query }) => {
 /**
 Select all instances of the search query.
 */
-const selectMatches = /*@__PURE__*/searchCommand((view, { query }) => {
+const selectMatches = searchCommand((view, { query }) => {
     let ranges = query.matchAll(view.state.doc, 1000);
     if (!ranges || !ranges.length)
         return false;
@@ -18260,7 +18060,7 @@ const selectSelectionMatches = ({ state, dispatch }) => {
 /**
 Replace the current match of the search query.
 */
-const replaceNext = /*@__PURE__*/searchCommand((view, { query }) => {
+const replaceNext = searchCommand((view, { query }) => {
     let { state } = view, { from, to } = state.selection.main;
     let next = query.nextMatch(state.doc, from, from);
     if (!next)
@@ -18286,7 +18086,7 @@ const replaceNext = /*@__PURE__*/searchCommand((view, { query }) => {
 Replace all instances of the search query with the given
 replacement.
 */
-const replaceAll = /*@__PURE__*/searchCommand((view, { query }) => {
+const replaceAll = searchCommand((view, { query }) => {
     let changes = query.matchAll(view.state.doc, 1e9).map(match => {
         let { from, to } = match;
         return { from, to, insert: query.getReplacement(match) };
@@ -18351,7 +18151,6 @@ Default search-related key bindings.
  - F3, Mod-g: [`findNext`](https://codemirror.net/6/docs/ref/#search.findNext)
  - Shift-F3, Shift-Mod-g: [`findPrevious`](https://codemirror.net/6/docs/ref/#search.findPrevious)
  - Alt-g: [`gotoLine`](https://codemirror.net/6/docs/ref/#search.gotoLine)
- - Mod-d: [`selectNextOccurrence`](https://codemirror.net/6/docs/ref/#search.selectNextOccurrence)
 */
 const searchKeymap = [
     { key: "Mod-f", run: openSearchPanel, scope: "editor search-panel" },
@@ -18359,8 +18158,7 @@ const searchKeymap = [
     { key: "Mod-g", run: findNext, shift: findPrevious, scope: "editor search-panel" },
     { key: "Escape", run: closeSearchPanel, scope: "editor search-panel" },
     { key: "Mod-Shift-l", run: selectSelectionMatches },
-    { key: "Alt-g", run: gotoLine },
-    { key: "Mod-d", run: selectNextOccurrence },
+    { key: "Alt-g", run: gotoLine }
 ];
 function buildPanel(conf) {
     function phrase(phrase) { return conf.view.state.phrase(phrase); }
@@ -18450,7 +18248,7 @@ function announceMatch(view, { from, to }) {
     }
     return EditorView.announce.of(`${view.state.phrase("current match")}. ${text} ${view.state.phrase("on line")} ${view.state.doc.lineAt(from).number}`);
 }
-const baseTheme = /*@__PURE__*/EditorView.baseTheme({
+const baseTheme = EditorView.baseTheme({
     ".cm-panel.cm-search": {
         padding: "2px 6px 4px",
         position: "relative",
@@ -18471,8 +18269,7 @@ const baseTheme = /*@__PURE__*/EditorView.baseTheme({
             marginRight: ".2em"
         },
         "& label": {
-            fontSize: "80%",
-            whiteSpace: "pre"
+            fontSize: "80%"
         }
     },
     "&light .cm-searchMatch": { backgroundColor: "#ffff0054" },
@@ -18482,7 +18279,7 @@ const baseTheme = /*@__PURE__*/EditorView.baseTheme({
 });
 const searchExtensions = [
     searchState,
-    /*@__PURE__*/Prec.override(searchHighlighter),
+    Prec.override(searchHighlighter),
     baseTheme
 ];
 
