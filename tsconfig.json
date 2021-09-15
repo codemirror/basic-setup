@@ -11,7 +11,8 @@
         "alwaysStrict": true,
         "esModuleInterop": true,
         "declaration": true,
-        "outDir": "dist/"
+        "outDir": "dist/",
+        "moduleResolution": "node"
     },
     "include": ["src/"],
     "exclude": ["dist/"]
