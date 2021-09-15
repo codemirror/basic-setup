@@ -12,6 +12,7 @@ import {
     Decoration,
     ViewUpdate,
     ViewPlugin,
+    WidgetType,
 } from "@codemirror/view"
 import { historyKeymap, history } from "@codemirror/history"
 import { defaultKeymap, indentMore, indentLess } from "@codemirror/commands"
@@ -62,4 +63,5 @@ export {
     Decoration,
     ViewUpdate,
     ViewPlugin,
+    WidgetType,
 }
