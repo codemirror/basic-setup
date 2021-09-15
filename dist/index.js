@@ -10,6 +10,7 @@ export { history, historyKeymap } from '@codemirror/history';
 import { defaultKeymap } from '@codemirror/commands';
 export { defaultKeymap, indentLess, indentMore } from '@codemirror/commands';
 import { defaultHighlightStyle } from '@codemirror/highlight';
+export { HighlightStyle, tags } from '@codemirror/highlight';
 import { indentOnInput } from '@codemirror/language';
 import { rectangularSelection } from '@codemirror/rectangular-selection';
 import { foldGutter, foldKeymap } from '@codemirror/fold';

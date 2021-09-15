@@ -5,7 +5,7 @@ import { lineNumbers } from "@codemirror/gutter"
 import { keymap, EditorView, highlightSpecialChars, drawSelection, highlightActiveLine } from "@codemirror/view"
 import { historyKeymap, history } from "@codemirror/history"
 import { defaultKeymap, indentMore, indentLess } from "@codemirror/commands"
-import { defaultHighlightStyle } from "@codemirror/highlight"
+import { defaultHighlightStyle, tags, HighlightStyle } from "@codemirror/highlight"
 import { indentOnInput } from "@codemirror/language"
 import { rectangularSelection } from "@codemirror/rectangular-selection"
 import { foldGutter, foldKeymap } from "@codemirror/fold"
@@ -56,4 +56,6 @@ export {
     StreamLanguage,
     indentMore,
     indentLess,
+    tags,
+    HighlightStyle,
 }

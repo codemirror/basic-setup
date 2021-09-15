@@ -118,4 +118,16 @@ Object.defineProperty(exports, 'indentMore', {
         return commands.indentMore;
     }
 });
+Object.defineProperty(exports, 'HighlightStyle', {
+    enumerable: true,
+    get: function () {
+        return highlight.HighlightStyle;
+    }
+});
+Object.defineProperty(exports, 'tags', {
+    enumerable: true,
+    get: function () {
+        return highlight.tags;
+    }
+});
 exports.basicSetup = basicSetup;
