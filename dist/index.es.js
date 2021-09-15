@@ -19622,31 +19622,4 @@ function changeLineComment(option, ranges, state) {
     return null;
 }
 
-const basicSetup = [
-    lineNumbers(),
-    highlightSpecialChars(),
-    history(),
-    foldGutter(),
-    drawSelection(),
-    EditorState.allowMultipleSelections.of(true),
-    indentOnInput(),
-    defaultHighlightStyle.fallback,
-    bracketMatching(),
-    closeBrackets(),
-    autocompletion(),
-    rectangularSelection(),
-    // highlightActiveLine(),
-    highlightSelectionMatches(),
-    keymap.of([
-        ...closeBracketsKeymap,
-        ...defaultKeymap,
-        ...searchKeymap,
-        ...historyKeymap,
-        ...foldKeymap,
-        ...commentKeymap,
-        ...completionKeymap,
-        //    ...lint.lintKeymap,
-    ]),
-];
-
-export { Compartment, EditorSelection, EditorState, EditorView, HighlightStyle, StreamLanguage, basicSetup, defaultKeymap, history, historyKeymap, indentLess, indentMore, julia, keymap, placeholder, tags };
+export { Compartment, EditorSelection, EditorState, EditorView, HighlightStyle, StreamLanguage, autocompletion, bracketMatching, closeBrackets, closeBracketsKeymap, commentKeymap, completionKeymap, defaultHighlightStyle, defaultKeymap, drawSelection, foldGutter, foldKeymap, highlightSelectionMatches, highlightSpecialChars, history, historyKeymap, indentLess, indentMore, indentOnInput, julia, keymap, lineNumbers, placeholder, rectangularSelection, searchKeymap, tags };
