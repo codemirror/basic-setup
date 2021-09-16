@@ -1,6 +1,7 @@
 import { EditorState, EditorSelection, Compartment } from "@codemirror/state"
 import { StreamLanguage } from "@codemirror/stream-parser"
-import { julia } from "@codemirror/legacy-modes/mode/julia"
+import { julia as julia_legacy } from "@codemirror/legacy-modes/mode/julia"
+import { julia as julia_andrey } from "lang-julia"
 import { lineNumbers } from "@codemirror/gutter"
 import {
     keymap,
@@ -33,7 +34,8 @@ export {
     Compartment,
     EditorView,
     placeholder,
-    julia,
+    julia_legacy,
+    julia_andrey,
     keymap,
     history,
     historyKeymap,
