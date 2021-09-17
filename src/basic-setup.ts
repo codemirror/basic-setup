@@ -27,6 +27,7 @@ import { autocompletion } from "@codemirror/autocomplete"
 import { highlightSelectionMatches, searchKeymap } from "@codemirror/search"
 import { completionKeymap } from "@codemirror/autocomplete"
 import { commentKeymap } from "@codemirror/comment"
+import { TreeCursor } from "@lezer/common"
 
 export {
     EditorState,
@@ -66,4 +67,5 @@ export {
     ViewUpdate,
     ViewPlugin,
     WidgetType,
+    TreeCursor,
 }
