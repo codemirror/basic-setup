@@ -1,50 +1,18 @@
-import { EditorState } from '@codemirror/state';
-export { Compartment, EditorSelection, EditorState } from '@codemirror/state';
+export { Compartment, EditorSelection, EditorState, SelectionRange } from '@codemirror/state';
 export { StreamLanguage } from '@codemirror/stream-parser';
-export { julia } from '@codemirror/legacy-modes/mode/julia';
-import { lineNumbers } from '@codemirror/gutter';
-import { highlightSpecialChars, drawSelection, highlightActiveLine, keymap } from '@codemirror/view';
-export { EditorView, keymap } from '@codemirror/view';
-import { history, historyKeymap } from '@codemirror/history';
+export { julia as julia_legacy } from '@codemirror/legacy-modes/mode/julia';
+export { julia as julia_andrey } from 'lang-julia';
+export { lineNumbers } from '@codemirror/gutter';
+export { Decoration, EditorView, ViewPlugin, ViewUpdate, WidgetType, drawSelection, highlightSpecialChars, keymap, placeholder } from '@codemirror/view';
 export { history, historyKeymap } from '@codemirror/history';
-import { defaultKeymap } from '@codemirror/commands';
 export { defaultKeymap, indentLess, indentMore } from '@codemirror/commands';
-import { defaultHighlightStyle } from '@codemirror/highlight';
-export { HighlightStyle, tags } from '@codemirror/highlight';
-import { indentOnInput } from '@codemirror/language';
-import { rectangularSelection } from '@codemirror/rectangular-selection';
-import { foldGutter, foldKeymap } from '@codemirror/fold';
-import { bracketMatching } from '@codemirror/matchbrackets';
-import { closeBrackets, closeBracketsKeymap } from '@codemirror/closebrackets';
-import { autocompletion, completionKeymap } from '@codemirror/autocomplete';
-import { highlightSelectionMatches, searchKeymap } from '@codemirror/search';
-import { commentKeymap } from '@codemirror/comment';
-
-const basicSetup = [
-    /*@__PURE__*/lineNumbers(),
-    /*@__PURE__*/highlightSpecialChars(),
-    /*@__PURE__*/history(),
-    /*@__PURE__*/foldGutter(),
-    /*@__PURE__*/drawSelection(),
-    /*@__PURE__*/EditorState.allowMultipleSelections.of(true),
-    /*@__PURE__*/indentOnInput(),
-    defaultHighlightStyle.fallback,
-    /*@__PURE__*/bracketMatching(),
-    /*@__PURE__*/closeBrackets(),
-    /*@__PURE__*/autocompletion(),
-    /*@__PURE__*/rectangularSelection(),
-    /*@__PURE__*/highlightActiveLine(),
-    /*@__PURE__*/highlightSelectionMatches(),
-    /*@__PURE__*/keymap.of([
-        ...closeBracketsKeymap,
-        ...defaultKeymap,
-        ...searchKeymap,
-        ...historyKeymap,
-        ...foldKeymap,
-        ...commentKeymap,
-        ...completionKeymap,
-        //    ...lint.lintKeymap,
-    ]),
-];
-
-export { basicSetup };
+export { HighlightStyle, defaultHighlightStyle, tags } from '@codemirror/highlight';
+export { indentOnInput, syntaxTree } from '@codemirror/language';
+export { rectangularSelection } from '@codemirror/rectangular-selection';
+export { foldGutter, foldKeymap } from '@codemirror/fold';
+export { bracketMatching } from '@codemirror/matchbrackets';
+export { closeBrackets, closeBracketsKeymap } from '@codemirror/closebrackets';
+export { autocompletion, completionKeymap } from '@codemirror/autocomplete';
+export { highlightSelectionMatches, searchKeymap } from '@codemirror/search';
+export { commentKeymap } from '@codemirror/comment';
+export { TreeCursor } from '@lezer/common';

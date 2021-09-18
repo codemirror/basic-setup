@@ -1,12 +1,18 @@
-import * as _codemirror_state from '@codemirror/state';
-export { Compartment, EditorSelection, EditorState } from '@codemirror/state';
+export { Compartment, EditorSelection, EditorState, SelectionRange } from '@codemirror/state';
 export { StreamLanguage } from '@codemirror/stream-parser';
-export { julia } from '@codemirror/legacy-modes/mode/julia';
-export { EditorView, keymap } from '@codemirror/view';
+export { julia as julia_legacy } from '@codemirror/legacy-modes/mode/julia';
+export { julia as julia_andrey } from 'lang-julia';
+export { lineNumbers } from '@codemirror/gutter';
+export { Decoration, EditorView, ViewPlugin, ViewUpdate, WidgetType, drawSelection, highlightSpecialChars, keymap, placeholder } from '@codemirror/view';
 export { history, historyKeymap } from '@codemirror/history';
 export { defaultKeymap, indentLess, indentMore } from '@codemirror/commands';
-export { HighlightStyle, tags } from '@codemirror/highlight';
-
-declare const basicSetup: _codemirror_state.Extension[];
-
-export { basicSetup };
+export { HighlightStyle, defaultHighlightStyle, tags } from '@codemirror/highlight';
+export { indentOnInput, syntaxTree } from '@codemirror/language';
+export { rectangularSelection } from '@codemirror/rectangular-selection';
+export { foldGutter, foldKeymap } from '@codemirror/fold';
+export { bracketMatching } from '@codemirror/matchbrackets';
+export { closeBrackets, closeBracketsKeymap } from '@codemirror/closebrackets';
+export { autocompletion, completionKeymap } from '@codemirror/autocomplete';
+export { highlightSelectionMatches, searchKeymap } from '@codemirror/search';
+export { commentKeymap } from '@codemirror/comment';
+export { TreeCursor } from '@lezer/common';

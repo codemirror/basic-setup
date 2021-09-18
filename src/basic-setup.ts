@@ -1,4 +1,4 @@
-import { EditorState, EditorSelection, Compartment } from "@codemirror/state"
+import { EditorState, EditorSelection, Compartment, SelectionRange } from "@codemirror/state"
 import { StreamLanguage } from "@codemirror/stream-parser"
 import { julia as julia_legacy } from "@codemirror/legacy-modes/mode/julia"
 import { julia as julia_andrey } from "lang-julia"
@@ -34,6 +34,7 @@ export {
     EditorSelection,
     Compartment,
     EditorView,
+    SelectionRange,
     placeholder,
     julia_legacy,
     julia_andrey,
