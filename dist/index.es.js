@@ -13946,6 +13946,80 @@ const defaultHighlightStyle = /*@__PURE__*/HighlightStyle.define([
     { tag: tags.invalid,
         color: "#f00" }
 ]);
+/**
+This is a highlight style that adds stable, predictable classes to
+tokens, for styling with external CSS.
+
+These tags are mapped to their name prefixed with `"cmt-"` (for
+example `"cmt-comment"`):
+
+* [`link`](https://codemirror.net/6/docs/ref/#highlight.tags.link)
+* [`heading`](https://codemirror.net/6/docs/ref/#highlight.tags.heading)
+* [`emphasis`](https://codemirror.net/6/docs/ref/#highlight.tags.emphasis)
+* [`strong`](https://codemirror.net/6/docs/ref/#highlight.tags.strong)
+* [`keyword`](https://codemirror.net/6/docs/ref/#highlight.tags.keyword)
+* [`atom`](https://codemirror.net/6/docs/ref/#highlight.tags.atom) [`bool`](https://codemirror.net/6/docs/ref/#highlight.tags.bool)
+* [`url`](https://codemirror.net/6/docs/ref/#highlight.tags.url)
+* [`labelName`](https://codemirror.net/6/docs/ref/#highlight.tags.labelName)
+* [`inserted`](https://codemirror.net/6/docs/ref/#highlight.tags.inserted)
+* [`deleted`](https://codemirror.net/6/docs/ref/#highlight.tags.deleted)
+* [`literal`](https://codemirror.net/6/docs/ref/#highlight.tags.literal)
+* [`string`](https://codemirror.net/6/docs/ref/#highlight.tags.string)
+* [`number`](https://codemirror.net/6/docs/ref/#highlight.tags.number)
+* [`variableName`](https://codemirror.net/6/docs/ref/#highlight.tags.variableName)
+* [`typeName`](https://codemirror.net/6/docs/ref/#highlight.tags.typeName)
+* [`namespace`](https://codemirror.net/6/docs/ref/#highlight.tags.namespace)
+* [`macroName`](https://codemirror.net/6/docs/ref/#highlight.tags.macroName)
+* [`propertyName`](https://codemirror.net/6/docs/ref/#highlight.tags.propertyName)
+* [`operator`](https://codemirror.net/6/docs/ref/#highlight.tags.operator)
+* [`comment`](https://codemirror.net/6/docs/ref/#highlight.tags.comment)
+* [`meta`](https://codemirror.net/6/docs/ref/#highlight.tags.meta)
+* [`punctuation`](https://codemirror.net/6/docs/ref/#highlight.tags.puncutation)
+* [`invalid`](https://codemirror.net/6/docs/ref/#highlight.tags.invalid)
+
+In addition, these mappings are provided:
+
+* [`regexp`](https://codemirror.net/6/docs/ref/#highlight.tags.regexp),
+  [`escape`](https://codemirror.net/6/docs/ref/#highlight.tags.escape), and
+  [`special`](https://codemirror.net/6/docs/ref/#highlight.tags.special)[`(string)`](https://codemirror.net/6/docs/ref/#highlight.tags.string)
+  are mapped to `"cmt-string2"`
+* [`special`](https://codemirror.net/6/docs/ref/#highlight.tags.special)[`(variableName)`](https://codemirror.net/6/docs/ref/#highlight.tags.variableName)
+  to `"cmt-variableName2"`
+* [`local`](https://codemirror.net/6/docs/ref/#highlight.tags.local)[`(variableName)`](https://codemirror.net/6/docs/ref/#highlight.tags.variableName)
+  to `"cmt-variableName cmt-local"`
+* [`definition`](https://codemirror.net/6/docs/ref/#highlight.tags.definition)[`(variableName)`](https://codemirror.net/6/docs/ref/#highlight.tags.variableName)
+  to `"cmt-variableName cmt-definition"`
+*/
+/*@__PURE__*/HighlightStyle.define([
+    { tag: tags.link, class: "cmt-link" },
+    { tag: tags.heading, class: "cmt-heading" },
+    { tag: tags.emphasis, class: "cmt-emphasis" },
+    { tag: tags.strong, class: "cmt-strong" },
+    { tag: tags.keyword, class: "cmt-keyword" },
+    { tag: tags.atom, class: "cmt-atom" },
+    { tag: tags.bool, class: "cmt-bool" },
+    { tag: tags.url, class: "cmt-url" },
+    { tag: tags.labelName, class: "cmt-labelName" },
+    { tag: tags.inserted, class: "cmt-inserted" },
+    { tag: tags.deleted, class: "cmt-deleted" },
+    { tag: tags.literal, class: "cmt-literal" },
+    { tag: tags.string, class: "cmt-string" },
+    { tag: tags.number, class: "cmt-number" },
+    { tag: [tags.regexp, tags.escape, /*@__PURE__*/tags.special(tags.string)], class: "cmt-string2" },
+    { tag: tags.variableName, class: "cmt-variableName" },
+    { tag: /*@__PURE__*/tags.local(tags.variableName), class: "cmt-variableName cmt-local" },
+    { tag: /*@__PURE__*/tags.definition(tags.variableName), class: "cmt-variableName cmt-definition" },
+    { tag: /*@__PURE__*/tags.special(tags.variableName), class: "cmt-variableName2" },
+    { tag: tags.typeName, class: "cmt-typeName" },
+    { tag: tags.namespace, class: "cmt-namespace" },
+    { tag: tags.macroName, class: "cmt-macroName" },
+    { tag: tags.propertyName, class: "cmt-propertyName" },
+    { tag: tags.operator, class: "cmt-operator" },
+    { tag: tags.comment, class: "cmt-comment" },
+    { tag: tags.meta, class: "cmt-meta" },
+    { tag: tags.invalid, class: "cmt-invalid" },
+    { tag: tags.punctuation, class: "cmt-punctuation" }
+]);
 
 // Counts the column offset in a string, taking tabs into account.
 // Used mostly to find indentation.
@@ -21718,4 +21792,4 @@ function changeLineComment(option, ranges, state) {
     return null;
 }
 
-export { Compartment, Decoration, EditorSelection, EditorState, EditorView, HighlightStyle, SelectionRange, StreamLanguage, TreeCursor, ViewPlugin, ViewUpdate, WidgetType, autocompletion, bracketMatching, closeBrackets, closeBracketsKeymap, commentKeymap, completionKeymap, defaultHighlightStyle, defaultKeymap, drawSelection, foldGutter, foldKeymap, highlightSelectionMatches, highlightSpecialChars, history, historyKeymap, indentLess, indentMore, indentOnInput, julia as julia_andrey, julia$1 as julia_legacy, keymap, lineNumbers, placeholder, rectangularSelection, searchKeymap, syntaxTree, tags };
+export { Compartment, Decoration, EditorSelection, EditorState, EditorView, Facet, HighlightStyle, SelectionRange, StateEffect, StateField, StreamLanguage, Transaction, TreeCursor, ViewPlugin, ViewUpdate, WidgetType, autocompletion, bracketMatching, closeBrackets, closeBracketsKeymap, commentKeymap, completionKeymap, defaultHighlightStyle, defaultKeymap, drawSelection, foldGutter, foldKeymap, highlightSelectionMatches, highlightSpecialChars, history, historyKeymap, indentLess, indentMore, indentOnInput, indentUnit, julia as julia_andrey, julia$1 as julia_legacy, keymap, lineNumbers, placeholder, rectangularSelection, searchKeymap, syntaxTree, tags };

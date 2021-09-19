@@ -1,4 +1,4 @@
-import { EditorState, EditorSelection, Compartment, SelectionRange } from "@codemirror/state"
+import { EditorState, EditorSelection, Compartment, SelectionRange, Facet, StateField, StateEffect, Transaction } from "@codemirror/state"
 import { StreamLanguage } from "@codemirror/stream-parser"
 import { julia as julia_legacy } from "@codemirror/legacy-modes/mode/julia"
 import { julia as julia_andrey } from "lang-julia"
@@ -18,7 +18,7 @@ import {
 import { historyKeymap, history } from "@codemirror/history"
 import { defaultKeymap, indentMore, indentLess } from "@codemirror/commands"
 import { defaultHighlightStyle, tags, HighlightStyle } from "@codemirror/highlight"
-import { indentOnInput, syntaxTree } from "@codemirror/language"
+import { indentOnInput, indentUnit, syntaxTree } from "@codemirror/language"
 import { rectangularSelection } from "@codemirror/rectangular-selection"
 import { foldGutter, foldKeymap } from "@codemirror/fold"
 import { bracketMatching } from "@codemirror/matchbrackets"
@@ -30,6 +30,11 @@ import { commentKeymap } from "@codemirror/comment"
 import { TreeCursor } from "@lezer/common"
 
 export {
+    Facet,
+    StateField,
+    StateEffect,
+    Transaction,
+    indentUnit,
     EditorState,
     EditorSelection,
     Compartment,
