@@ -5,16 +5,16 @@ import dts from "rollup-plugin-dts"
 
 export default [
     {
-        input: "dist/index.js",
+        input: "src/basic-setup.ts",
         output: {
-            file: "dist/bundle.js",
+            file: "dist/index.es.js",
             format: "es",
         },
         plugins: [typescript(), nodeResolve()],
     },
     {
-        input: "dist/index.js",
-        output: { file: "dist/bundle.d.ts", format: "es" },
+        input: "src/basic-setup.ts",
+        output: { file: "dist/index.d.ts", format: "es" },
         plugins: [
             typescript(),
             nodeResolve(),

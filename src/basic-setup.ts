@@ -1,4 +1,4 @@
-import { EditorState, EditorSelection, Compartment, SelectionRange, Facet, StateField, StateEffect, Transaction } from "@codemirror/state"
+import { EditorState, EditorSelection, Compartment, SelectionRange, Facet, StateField, StateEffect, Transaction, Text } from "@codemirror/state"
 import { StreamLanguage } from "@codemirror/stream-parser"
 import { julia as julia_legacy } from "@codemirror/legacy-modes/mode/julia"
 import { julia as julia_andrey } from "lang-julia"
@@ -74,4 +74,5 @@ export {
     ViewPlugin,
     WidgetType,
     TreeCursor,
+    Text,
 }

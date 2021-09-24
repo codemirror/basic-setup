@@ -7,7 +7,8 @@
     "prepare": "cm-buildhelper src/basic-setup.ts",
     "esbuild": "cm-buildhelper src/basic-setup.ts && esbuild dist/index.js --bundle --format=esm --outfile=dist/index.bundle.js",
     "roll": "cm-buildhelper src/basic-setup.ts && rollup --config --configDebug",
-    "bundle": "rollup src/basic-setup.ts -f es -o dist/index.es.js -p @rollup/plugin-node-resolve"
+    "bundle": "rollup src/basic-setup.ts -f es -o dist/index.es.js -p @rollup/plugin-node-resolve",
+    "bundlecool": "rollup -c"
   },
   "keywords": [
     "editor",
