@@ -5234,7 +5234,17 @@ function keyName(event) {
 }
 
 function getSelection(root) {
-    return (root.getSelection ? root.getSelection() : document.getSelection());
+    let target;
+    // Browsers differ on whether shadow roots have a getSelection
+    // method. If it exists, use that, otherwise, call it on the
+    // document.
+    if (root.nodeType == 11) { // Shadow root
+        target = root.getSelection ? root : root.ownerDocument;
+    }
+    else {
+        target = root;
+    }
+    return target.getSelection();
 }
 function contains(dom, node) {
     return node ? dom.contains(node.nodeType != 1 ? node.parentNode : node) : false;
@@ -7007,7 +7017,9 @@ class ViewUpdate {
             this.flags |= 2 /* Height */;
     }
     /**
-    Tells you whether the viewport changed in this update.
+    Tells you whether the [viewport](https://codemirror.net/6/docs/ref/#view.EditorView.viewport) or
+    [visible ranges](https://codemirror.net/6/docs/ref/#view.EditorView.visibleRanges) changed in this
+    update.
     */
     get viewportChanged() {
         return (this.flags & 4 /* Viewport */) > 0;
@@ -7023,7 +7035,7 @@ class ViewUpdate {
     or the lines or characters within it has changed.
     */
     get geometryChanged() {
-        return this.docChanged || (this.flags & (16 /* Geometry */ | 2 /* Height */)) > 0;
+        return this.docChanged || (this.flags & (8 /* Geometry */ | 2 /* Height */)) > 0;
     }
     /**
     True when this update indicates a focus change.
@@ -7108,7 +7120,7 @@ class DocView extends ContentView {
         changedRanges = ChangedRange.extendWithRanges(changedRanges, decoDiff);
         let pointerSel = update.transactions.some(tr => tr.isUserEvent("select.pointer"));
         if (this.dirty == 0 /* Not */ && changedRanges.length == 0 &&
-            !(update.flags & (4 /* Viewport */ | 8 /* LineGaps */)) &&
+            !(update.flags & 4 /* Viewport */) &&
             update.state.selection.main.from >= this.view.viewport.from &&
             update.state.selection.main.to <= this.view.viewport.to) {
             this.updateSelection(forceSelection, pointerSel);
@@ -8011,25 +8023,27 @@ function posAtCoords(view, { x, y }, precise, bias = -1) {
         y = bias > 0 ? block.bottom + halfLine : block.top - halfLine;
     }
     let lineStart = block.from;
+    // Clip x to the viewport sides
     x = Math.max(content.left + 1, Math.min(content.right - 1, x));
     // If this is outside of the rendered viewport, we can't determine a position
     if (lineStart < view.viewport.from)
         return view.viewport.from == 0 ? 0 : posAtCoordsImprecise(view, content, block, x, y);
     if (lineStart > view.viewport.to)
         return view.viewport.to == view.state.doc.length ? view.state.doc.length : posAtCoordsImprecise(view, content, block, x, y);
-    // Clip x to the viewport sides
-    let root = view.root, element = root.elementFromPoint(x, y);
+    // Prefer ShadowRootOrDocument.elementFromPoint if present, fall back to document if not
+    let doc = view.dom.ownerDocument;
+    let element = (view.root.elementFromPoint ? view.root : doc).elementFromPoint(x, y);
     // There's visible editor content under the point, so we can try
     // using caret(Position|Range)FromPoint as a shortcut
     let node, offset = -1;
     if (element && view.contentDOM.contains(element) && !(view.docView.nearest(element) instanceof WidgetView)) {
-        if (root.caretPositionFromPoint) {
-            let pos = root.caretPositionFromPoint(x, y);
+        if (doc.caretPositionFromPoint) {
+            let pos = doc.caretPositionFromPoint(x, y);
             if (pos)
                 ({ offsetNode: node, offset } = pos);
         }
-        else if (root.caretRangeFromPoint) {
-            let range = root.caretRangeFromPoint(x, y);
+        else if (doc.caretRangeFromPoint) {
+            let range = doc.caretRangeFromPoint(x, y);
             if (range) {
                 ({ startContainer: node, startOffset: offset } = range);
                 if (browser.safari && isSuspiciousCaretResult(node, offset, x))
@@ -8448,7 +8462,7 @@ function capturePaste(view) {
 function doPaste(view, input) {
     let { state } = view, changes, i = 1, text = state.toText(input);
     let byLine = text.lines == state.selection.ranges.length;
-    let linewise = lastLinewiseCopy && state.selection.ranges.every(r => r.empty) && lastLinewiseCopy == text.toString();
+    let linewise = lastLinewiseCopy != null && state.selection.ranges.every(r => r.empty) && lastLinewiseCopy == text.toString();
     if (linewise) {
         let lastLine = -1;
         changes = state.changeByRange(range => {
@@ -8659,9 +8673,8 @@ handlers.paste = (view, event) => {
         return event.preventDefault();
     view.observer.flush();
     let data = brokenClipboardAPI ? null : event.clipboardData;
-    let text = data && data.getData("text/plain");
-    if (text) {
-        doPaste(view, text);
+    if (data) {
+        doPaste(view, data.getData("text/plain"));
         event.preventDefault();
     }
     else {
@@ -8710,7 +8723,7 @@ function copiedRange(state) {
 let lastLinewiseCopy = null;
 handlers.copy = handlers.cut = (view, event) => {
     let { text, ranges, linewise } = copiedRange(view.state);
-    if (!text)
+    if (!text && !linewise)
         return;
     lastLinewiseCopy = linewise ? text : null;
     let data = brokenClipboardAPI ? null : event.clipboardData;
@@ -9550,14 +9563,11 @@ class ViewState {
         let viewport = heightChanges.length ? this.mapViewport(this.viewport, update.changes) : this.viewport;
         if (scrollTo && (scrollTo.head < viewport.from || scrollTo.head > viewport.to) || !this.viewportIsAppropriate(viewport))
             viewport = this.getViewport(0, scrollTo);
-        if (!viewport.eq(this.viewport)) {
-            this.viewport = viewport;
-            update.flags |= 4 /* Viewport */;
-        }
+        this.viewport = viewport;
         this.updateForViewport();
         if (this.lineGaps.length || this.viewport.to - this.viewport.from > 15000 /* MinViewPort */)
-            update.flags |= this.updateLineGaps(this.ensureLineGaps(this.mapLineGaps(this.lineGaps, update.changes)));
-        this.computeVisibleRanges();
+            this.updateLineGaps(this.ensureLineGaps(this.mapLineGaps(this.lineGaps, update.changes)));
+        update.flags |= this.computeVisibleRanges();
         if (scrollTo)
             this.scrollTo = scrollTo;
         if (!this.mustEnforceCursorAssoc && update.selectionSet && update.view.lineWrapping &&
@@ -9590,12 +9600,12 @@ class ViewState {
                 refresh = oracle.refresh(whiteSpace, direction, lineHeight, charWidth, contentWidth / charWidth, lineHeights);
                 if (refresh) {
                     docView.minWidth = 0;
-                    result |= 16 /* Geometry */;
+                    result |= 8 /* Geometry */;
                 }
             }
             if (this.contentWidth != contentWidth) {
                 this.contentWidth = contentWidth;
-                result |= 16 /* Geometry */;
+                result |= 8 /* Geometry */;
             }
             if (dTop > 0 && dBottom > 0)
                 bias = Math.max(dTop, dBottom);
@@ -9607,17 +9617,12 @@ class ViewState {
         if (oracle.heightChanged)
             result |= 2 /* Height */;
         if (!this.viewportIsAppropriate(this.viewport, bias) ||
-            this.scrollTo && (this.scrollTo.head < this.viewport.from || this.scrollTo.head > this.viewport.to)) {
-            let newVP = this.getViewport(bias, this.scrollTo);
-            if (newVP.from != this.viewport.from || newVP.to != this.viewport.to) {
-                this.viewport = newVP;
-                result |= 4 /* Viewport */;
-            }
-        }
+            this.scrollTo && (this.scrollTo.head < this.viewport.from || this.scrollTo.head > this.viewport.to))
+            this.viewport = this.getViewport(bias, this.scrollTo);
         this.updateForViewport();
         if (this.lineGaps.length || this.viewport.to - this.viewport.from > 15000 /* MinViewPort */)
-            result |= this.updateLineGaps(this.ensureLineGaps(refresh ? [] : this.lineGaps));
-        this.computeVisibleRanges();
+            this.updateLineGaps(this.ensureLineGaps(refresh ? [] : this.lineGaps));
+        result |= this.computeVisibleRanges();
         if (this.mustEnforceCursorAssoc) {
             this.mustEnforceCursorAssoc = false;
             // This is done in the read stage, because moving the selection
@@ -9739,9 +9744,7 @@ class ViewState {
         if (!LineGap.same(gaps, this.lineGaps)) {
             this.lineGaps = gaps;
             this.lineGapDeco = Decoration.set(gaps.map(gap => gap.draw(this.heightOracle.lineWrapping)));
-            return 8 /* LineGaps */;
         }
-        return 0;
     }
     computeVisibleRanges() {
         let deco = this.state.facet(decorations);
@@ -9752,7 +9755,10 @@ class ViewState {
             span(from, to) { ranges.push({ from, to }); },
             point() { }
         }, 20);
+        let changed = ranges.length != this.visibleRanges.length ||
+            this.visibleRanges.some((r, i) => r.from != ranges[i].from || r.to != ranges[i].to);
         this.visibleRanges = ranges;
+        return changed ? 4 /* Viewport */ : 0;
     }
     lineAt(pos, editorTop) {
         editorTop += this.paddingTop;
@@ -9777,16 +9783,11 @@ class ViewState {
         return this.scaler.toDOM(this.heightMap.height, this.paddingTop);
     }
 }
-/**
-Indicates the range of the document that is in the visible
-viewport.
-*/
 class Viewport {
     constructor(from, to) {
         this.from = from;
         this.to = to;
     }
-    eq(b) { return this.from == b.from && this.to == b.to; }
 }
 function lineStructure(from, to, state) {
     let ranges = [], pos = from, total = 0;
@@ -10515,8 +10516,9 @@ class DOMReader {
             if (next == end)
                 break;
             let view = ContentView.get(cur), nextView = ContentView.get(next);
-            if ((view ? view.breakAfter : isBlockElement(cur)) ||
-                ((nextView ? nextView.breakAfter : isBlockElement(next)) && !(cur.nodeName == "BR" && !cur.cmIgnore)))
+            if (view && nextView ? view.breakAfter :
+                (view ? view.breakAfter : isBlockElement(cur)) ||
+                    (isBlockElement(next) && (cur.nodeName != "BR" || cur.cmIgnore)))
                 this.text += this.lineBreak;
             cur = next;
         }
@@ -10619,6 +10621,7 @@ class EditorView {
         this.editorAttrs = {};
         this.contentAttrs = {};
         this.bidiCache = [];
+        this.destroyed = false;
         /**
         @internal
         */
@@ -10717,6 +10720,10 @@ class EditorView {
                 throw new RangeError("Trying to update state with a transaction that doesn't start from the previous state.");
             state = tr.state;
         }
+        if (this.destroyed) {
+            this.viewState.state = state;
+            return;
+        }
         // When the phrases change, redraw the editor
         if (state.facet(EditorState.phrases) != this.state.facet(EditorState.phrases))
             return this.setState(state);
@@ -10766,6 +10773,10 @@ class EditorView {
     setState(newState) {
         if (this.updateState != 0 /* Idle */)
             throw new Error("Calls to EditorView.setState are not allowed while an update is in progress");
+        if (this.destroyed) {
+            this.viewState.state = newState;
+            return;
+        }
         this.updateState = 2 /* Updating */;
         try {
             for (let plugin of this.plugins)
@@ -10815,6 +10826,8 @@ class EditorView {
     @internal
     */
     measure(flush = true) {
+        if (this.destroyed)
+            return;
         if (this.measureScheduled > -1)
             cancelAnimationFrame(this.measureScheduled);
         this.measureScheduled = -1; // Prevent requestMeasure calls from scheduling another animation frame
@@ -10824,6 +10837,7 @@ class EditorView {
         try {
             for (let i = 0;; i++) {
                 this.updateState = 1 /* Measuring */;
+                let oldViewport = this.viewport;
                 let changed = this.viewState.measure(this.docView, i > 0);
                 let measuring = this.measureRequests;
                 if (!changed && !measuring.length && this.viewState.scrollTo == null)
@@ -10869,7 +10883,7 @@ class EditorView {
                     this.docView.scrollRangeIntoView(this.viewState.scrollTo);
                     this.viewState.scrollTo = null;
                 }
-                if (!(changed & 4 /* Viewport */) && this.measureRequests.length == 0)
+                if (this.viewport.from == oldViewport.from && this.viewport.to == oldViewport.to && this.measureRequests.length == 0)
                     break;
             }
         }
@@ -11205,11 +11219,13 @@ class EditorView {
     destroy() {
         for (let plugin of this.plugins)
             plugin.destroy(this);
+        this.plugins = [];
         this.inputState.destroy();
         this.dom.remove();
         this.observer.destroy();
         if (this.measureScheduled > -1)
             cancelAnimationFrame(this.measureScheduled);
+        this.destroyed = true;
     }
     /**
     Facet that can be used to add DOM event handlers. The value
@@ -13527,7 +13543,7 @@ function matchContext(context, stack, depth) {
     return true;
 }
 const t = Tag.define;
-const comment = /*@__PURE__*/t(), name = /*@__PURE__*/t(), typeName = /*@__PURE__*/t(name), literal = /*@__PURE__*/t(), string = /*@__PURE__*/t(literal), number = /*@__PURE__*/t(literal), content = /*@__PURE__*/t(), heading = /*@__PURE__*/t(content), keyword = /*@__PURE__*/t(), operator = /*@__PURE__*/t(), punctuation = /*@__PURE__*/t(), bracket = /*@__PURE__*/t(punctuation), meta = /*@__PURE__*/t();
+const comment = /*@__PURE__*/t(), name = /*@__PURE__*/t(), typeName = /*@__PURE__*/t(name), propertyName = /*@__PURE__*/t(name), literal = /*@__PURE__*/t(), string = /*@__PURE__*/t(literal), number = /*@__PURE__*/t(literal), content = /*@__PURE__*/t(), heading = /*@__PURE__*/t(content), keyword = /*@__PURE__*/t(), operator = /*@__PURE__*/t(), punctuation = /*@__PURE__*/t(), bracket = /*@__PURE__*/t(punctuation), meta = /*@__PURE__*/t();
 /**
 The default set of highlighting [tags](https://codemirror.net/6/docs/ref/#highlight.Tag^define) used
 by regular language packages and themes.
@@ -13583,9 +13599,13 @@ const tags = {
     */
     tagName: /*@__PURE__*/t(typeName),
     /**
-    A property, field, or attribute [name](https://codemirror.net/6/docs/ref/#highlight.tags.name).
+    A property or field [name](https://codemirror.net/6/docs/ref/#highlight.tags.name).
     */
-    propertyName: /*@__PURE__*/t(name),
+    propertyName: propertyName,
+    /**
+    An attribute name (subtag of [`propertyName`](https://codemirror.net/6/docs/ref/#highlight.tags.propertyName)).
+    */
+    attributeName: /*@__PURE__*/t(propertyName),
     /**
     The [name](https://codemirror.net/6/docs/ref/#highlight.tags.name) of a class.
     */
@@ -13618,6 +13638,10 @@ const tags = {
     A character literal (subtag of [string](https://codemirror.net/6/docs/ref/#highlight.tags.string)).
     */
     character: /*@__PURE__*/t(string),
+    /**
+    An attribute value (subtag of [string](https://codemirror.net/6/docs/ref/#highlight.tags.string)).
+    */
+    attributeValue: /*@__PURE__*/t(string),
     /**
     A number [literal](https://codemirror.net/6/docs/ref/#highlight.tags.literal).
     */
@@ -15176,7 +15200,12 @@ class Stack {
         let reduce = this.p.parser.stateSlot(this.state, 5 /* ForcedReduce */);
         if ((reduce & 65536 /* ReduceFlag */) == 0)
             return false;
-        if (!this.p.parser.validAction(this.state, reduce)) {
+        let { parser } = this.p;
+        if (!parser.validAction(this.state, reduce)) {
+            let depth = reduce >> 19 /* ReduceDepthShift */, term = reduce & 65535 /* ValueMask */;
+            let target = this.stack.length - depth * 3;
+            if (target < 0 || parser.getGoto(this.stack[target], term, true) < 0)
+                return false;
             this.storeNode(0 /* Err */, this.reducePos, this.reducePos, 4, true);
             this.score -= 100 /* Reduce */;
         }
@@ -18911,8 +18940,8 @@ const historyKeymap = [
 ];
 
 const baseTheme$4 = /*@__PURE__*/EditorView.baseTheme({
-    ".cm-matchingBracket": { color: "#0b0" },
-    ".cm-nonmatchingBracket": { color: "#a22" }
+    ".cm-matchingBracket": { backgroundColor: "#328c8252" },
+    ".cm-nonmatchingBracket": { backgroundColor: "#bb555544" }
 });
 const DefaultScanDist = 10000, DefaultBrackets = "()[]{}";
 const bracketMatchingConfig = /*@__PURE__*/Facet.define({
@@ -18983,11 +19012,13 @@ bracket was found at `pos`, or a match result otherwise.
 */
 function matchBrackets(state, pos, dir, config = {}) {
     let maxScanDistance = config.maxScanDistance || DefaultScanDist, brackets = config.brackets || DefaultBrackets;
-    let tree = syntaxTree(state), sub = tree.resolve(pos, dir), matches;
-    if (matches = matchingNodes(sub.type, dir, brackets))
-        return matchMarkedBrackets(state, pos, dir, sub, matches, brackets);
-    else
-        return matchPlainBrackets(state, pos, dir, tree, sub.type, maxScanDistance, brackets);
+    let tree = syntaxTree(state), node = tree.resolveInner(pos, dir);
+    for (let cur = node; cur; cur = cur.parent) {
+        let matches = matchingNodes(cur.type, dir, brackets);
+        if (matches)
+            return matchMarkedBrackets(state, pos, dir, cur, matches, brackets);
+    }
+    return matchPlainBrackets(state, pos, dir, tree, node.type, maxScanDistance, brackets);
 }
 function matchMarkedBrackets(_state, _pos, dir, token, matching, brackets) {
     let parent = token.parent, firstToken = { from: token.from, to: token.to };
@@ -19607,31 +19638,40 @@ will also delete that whitespace. When the cursor is between
 matching brackets, an additional newline will be inserted after
 the cursor.
 */
-const insertNewlineAndIndent = ({ state, dispatch }) => {
-    if (state.readOnly)
-        return false;
-    let changes = state.changeByRange(({ from, to }) => {
-        let explode = from == to && isBetweenBrackets(state, from);
-        let cx = new IndentContext(state, { simulateBreak: from, simulateDoubleBreak: !!explode });
-        let indent = getIndentation(cx, from);
-        if (indent == null)
-            indent = /^\s*/.exec(state.doc.lineAt(from).text)[0].length;
-        let line = state.doc.lineAt(from);
-        while (to < line.to && /\s/.test(line.text[to - line.from]))
-            to++;
-        if (explode)
-            ({ from, to } = explode);
-        else if (from > line.from && from < line.from + 100 && !/\S/.test(line.text.slice(0, from)))
-            from = line.from;
-        let insert = ["", indentString(state, indent)];
-        if (explode)
-            insert.push(indentString(state, cx.lineIndent(line.from, -1)));
-        return { changes: { from, to, insert: Text.of(insert) },
-            range: EditorSelection.cursor(from + 1 + insert[1].length) };
-    });
-    dispatch(state.update(changes, { scrollIntoView: true, userEvent: "input" }));
-    return true;
-};
+const insertNewlineAndIndent = /*@__PURE__*/newlineAndIndent(false);
+/**
+Create a blank, indented line below the current line.
+*/
+const insertBlankLine = /*@__PURE__*/newlineAndIndent(true);
+function newlineAndIndent(atEof) {
+    return ({ state, dispatch }) => {
+        if (state.readOnly)
+            return false;
+        let changes = state.changeByRange(range => {
+            let { from, to } = range, line = state.doc.lineAt(from);
+            let explode = !atEof && from == to && isBetweenBrackets(state, from);
+            if (atEof)
+                from = to = (to <= line.to ? line : state.doc.lineAt(to)).to;
+            let cx = new IndentContext(state, { simulateBreak: from, simulateDoubleBreak: !!explode });
+            let indent = getIndentation(cx, from);
+            if (indent == null)
+                indent = /^\s*/.exec(state.doc.lineAt(from).text)[0].length;
+            while (to < line.to && /\s/.test(line.text[to - line.from]))
+                to++;
+            if (explode)
+                ({ from, to } = explode);
+            else if (from > line.from && from < line.from + 100 && !/\S/.test(line.text.slice(0, from)))
+                from = line.from;
+            let insert = ["", indentString(state, indent)];
+            if (explode)
+                insert.push(indentString(state, cx.lineIndent(line.from, -1)));
+            return { changes: { from, to, insert: Text.of(insert) },
+                range: EditorSelection.cursor(from + 1 + insert[1].length) };
+        });
+        dispatch(state.update(changes, { scrollIntoView: true, userEvent: "input" }));
+        return true;
+    };
+}
 function changeBySelectedLine(state, f) {
     let atLine = -1;
     return state.changeByRange(range => {
@@ -19821,6 +19861,7 @@ The default keymap. Includes all bindings from
 - Shift-Alt-ArrowUp: [`copyLineUp`](https://codemirror.net/6/docs/ref/#commands.copyLineUp)
 - Shift-Alt-ArrowDown: [`copyLineDown`](https://codemirror.net/6/docs/ref/#commands.copyLineDown)
 - Escape: [`simplifySelection`](https://codemirror.net/6/docs/ref/#commands.simplifySelection)
+- Ctrl-Enter (Comd-Enter on macOS): [`insertBlankLine`](https://codemirror.net/6/docs/ref/#commands.insertBlankLine)
 - Alt-l (Ctrl-l on macOS): [`selectLine`](https://codemirror.net/6/docs/ref/#commands.selectLine)
 - Ctrl-i (Cmd-i on macOS): [`selectParentSyntax`](https://codemirror.net/6/docs/ref/#commands.selectParentSyntax)
 - Ctrl-[ (Cmd-[ on macOS): [`indentLess`](https://codemirror.net/6/docs/ref/#commands.indentLess)
@@ -19837,6 +19878,7 @@ const defaultKeymap = /*@__PURE__*/[
     { key: "Alt-ArrowDown", run: moveLineDown },
     { key: "Shift-Alt-ArrowDown", run: copyLineDown },
     { key: "Escape", run: simplifySelection },
+    { key: "Mod-Enter", run: insertBlankLine },
     { key: "Alt-l", mac: "Ctrl-l", run: selectLine },
     { key: "Mod-i", run: selectParentSyntax, preventDefault: true },
     { key: "Mod-[", run: indentLess },
