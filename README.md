@@ -28,7 +28,7 @@ This is why we have this repository to manage our dependencies and to export a s
 8. Copy the contents of `dist/index.d.ts` and In Pluto: paste into `frontend/imports/CodemirrorPlutoSetup.d.ts`. Save without formatting.
 9. git commit etc
 
-To test something inside pluto without publishing a version:
+## To test something inside pluto without publishing a version:
 1. `npm run bundle` and commit to a new branch. Get the commit hash, e.g. `bab65fc`
 2. In Pluto, use the commit hash as your version number, e.g. 
 
