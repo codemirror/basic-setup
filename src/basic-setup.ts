@@ -1,4 +1,4 @@
-import { EditorState, EditorSelection, Compartment, SelectionRange, Facet, StateField, StateEffect, Transaction, Text } from "@codemirror/state"
+import { EditorState, EditorSelection, Compartment, SelectionRange, Facet, StateField, StateEffect, Transaction, Text, combineConfig } from "@codemirror/state"
 import { StreamLanguage } from "@codemirror/stream-parser"
 import { julia as julia_legacy } from "@codemirror/legacy-modes/mode/julia"
 import { julia as julia_andrey } from "lang-julia"
@@ -27,7 +27,7 @@ import { autocompletion } from "@codemirror/autocomplete"
 import { highlightSelectionMatches, searchKeymap } from "@codemirror/search"
 import { completionKeymap } from "@codemirror/autocomplete"
 import { commentKeymap } from "@codemirror/comment"
-import { TreeCursor } from "@lezer/common"
+import { TreeCursor, NodeProp } from "@lezer/common"
 
 export {
     Facet,
@@ -75,4 +75,6 @@ export {
     WidgetType,
     TreeCursor,
     Text,
+    combineConfig,
+    NodeProp,
 }
