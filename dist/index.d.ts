@@ -4714,4 +4714,120 @@ declare function javascript(config?: {
     typescript?: boolean;
 }): LanguageSupport;
 
-export { Compartment, Decoration, EditorSelection, EditorState, EditorView, Facet, HighlightStyle, NodeProp, SelectionRange, StateEffect, StateField, StreamLanguage, Text, Transaction, TreeCursor, ViewPlugin, ViewUpdate, WidgetType, autocompletion, bracketMatching, closeBrackets, closeBracketsKeymap, combineConfig, commentKeymap, completionKeymap, defaultHighlightStyle, defaultKeymap, drawSelection, foldGutter, foldKeymap, highlightSelectionMatches, highlightSpecialChars, history, historyKeymap, html, htmlLanguage, indentLess, indentMore, indentOnInput, indentUnit, javascript, javascriptLanguage, julia as julia_andrey, julia$1 as julia_legacy, keymap, lineNumbers, markdown, markdownLanguage, parseMixed, placeholder, rectangularSelection, searchKeymap, syntaxTree, tags };
+declare type SQLDialectSpec = {
+    /**
+    A space-separated list of keywords for the dialect.
+    */
+    keywords?: string;
+    /**
+    A space-separated string of built-in identifiers for the dialect.
+    */
+    builtin?: string;
+    /**
+    A space-separated string of type names for the dialect.
+    */
+    types?: string;
+    /**
+    Controls whether regular strings allow backslash escapes.
+    */
+    backslashEscapes?: boolean;
+    /**
+    Controls whether # creates a line comment.
+    */
+    hashComments?: boolean;
+    /**
+    Controls whether `//` creates a line comment.
+    */
+    slashComments?: boolean;
+    /**
+    When enabled `--` comments are only recognized when there's a
+    space after the dashes.
+    */
+    spaceAfterDashes?: boolean;
+    /**
+    When enabled, things quoted with double quotes are treated as
+    strings, rather than identifiers.
+    */
+    doubleQuotedStrings?: boolean;
+    /**
+    Enables strings like `_utf8'str'` or `N'str'`.
+    */
+    charSetCasts?: boolean;
+    /**
+    The set of characters that make up operators. Defaults to
+    `"*+\-%<>!=&|~^/"`.
+    */
+    operatorChars?: string;
+    /**
+    The set of characters that start a special variable name.
+    Defaults to `"?"`.
+    */
+    specialVar?: string;
+    /**
+    The characters that can be used to quote identifiers. Defaults
+    to `"\""`.
+    */
+    identifierQuotes?: string;
+};
+/**
+Represents an SQL dialect.
+*/
+declare class SQLDialect {
+    /**
+    The language for this dialect.
+    */
+    readonly language: LRLanguage;
+    /**
+    Returns the language for this dialect as an extension.
+    */
+    get extension(): Extension;
+    /**
+    Define a new dialect.
+    */
+    static define(spec: SQLDialectSpec): SQLDialect;
+}
+/**
+Options used to configure an SQL extension.
+*/
+interface SQLConfig {
+    /**
+    The [dialect](https://codemirror.net/6/docs/ref/#lang-sql.SQLDialect) to use. Defaults to
+    [`StandardSQL`](https://codemirror.net/6/docs/ref/#lang-sql.StandardSQL).
+    */
+    dialect?: SQLDialect;
+    /**
+    An object that maps table names to options (columns) that can
+    be completed for that table. Use lower-case names here.
+    */
+    schema?: {
+        [table: string]: readonly (string | Completion)[];
+    };
+    /**
+    By default, the completions for the table names will be
+    generated from the `schema` object. But if you want to
+    customize them, you can pass an array of completions through
+    this option.
+    */
+    tables?: readonly Completion[];
+    /**
+    When given, columns from the named table can be completed
+    directly at the top level.
+    */
+    defaultTable?: string;
+    /**
+    When set to true, keyword completions will be upper-case.
+    */
+    upperCaseKeywords?: boolean;
+}
+/**
+SQL language support for the given SQL dialect, with keyword
+completion, and, if provided, schema-based completion as extra
+extensions.
+*/
+declare function sql(config?: SQLConfig): LanguageSupport;
+/**
+Dialect for [PostgreSQL](https://www.postgresql.org).
+*/
+declare const PostgreSQL: SQLDialect;
+
+export { Compartment, Decoration, EditorSelection, EditorState, EditorView, Facet, HighlightStyle, NodeProp, PostgreSQL, SelectionRange, StateEffect, StateField, StreamLanguage, Text, Transaction, TreeCursor, ViewPlugin, ViewUpdate, WidgetType, autocompletion, bracketMatching, closeBrackets, closeBracketsKeymap, combineConfig, commentKeymap, completionKeymap, defaultHighlightStyle, defaultKeymap, drawSelection, foldGutter, foldKeymap, highlightSelectionMatches, highlightSpecialChars, history, historyKeymap, html, htmlLanguage, indentLess, indentMore, indentOnInput, indentUnit, javascript, javascriptLanguage, julia as julia_andrey, julia$1 as julia_legacy, keymap, lineNumbers, markdown, markdownLanguage, parseMixed, placeholder, rectangularSelection, searchKeymap, sql, syntaxTree, tags };
