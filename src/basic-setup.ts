@@ -27,7 +27,10 @@ import { autocompletion } from "@codemirror/autocomplete"
 import { highlightSelectionMatches, searchKeymap } from "@codemirror/search"
 import { completionKeymap } from "@codemirror/autocomplete"
 import { commentKeymap } from "@codemirror/comment"
-import { TreeCursor, NodeProp } from "@lezer/common"
+import { TreeCursor, NodeProp, parseMixed } from "@lezer/common"
+import { markdown, markdownLanguage } from "@codemirror/lang-markdown"
+import { html, htmlLanguage } from "@codemirror/lang-html"
+import { javascript, javascriptLanguage } from "@codemirror/lang-javascript"
 
 export {
     Facet,
@@ -77,4 +80,11 @@ export {
     Text,
     combineConfig,
     NodeProp,
+    markdown,
+    markdownLanguage,
+    parseMixed,
+    html,
+    htmlLanguage,
+    javascript,
+    javascriptLanguage
 }
