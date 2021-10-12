@@ -32,6 +32,7 @@ import { markdown, markdownLanguage } from "@codemirror/lang-markdown"
 import { html, htmlLanguage } from "@codemirror/lang-html"
 import { javascript, javascriptLanguage } from "@codemirror/lang-javascript"
 import { sql, PostgreSQL } from "@codemirror/lang-sql"
+import { python, pythonLanguage } from "@codemirror/lang-python"
 
 export {
     Facet,
@@ -89,5 +90,7 @@ export {
     javascript,
     javascriptLanguage,
     sql,
-    PostgreSQL
+    PostgreSQL,
+    python,
+    pythonLanguage
 }
