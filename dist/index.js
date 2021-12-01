@@ -21,3 +21,4 @@ export { html, htmlLanguage } from '@codemirror/lang-html';
 export { javascript, javascriptLanguage } from '@codemirror/lang-javascript';
 export { PostgreSQL, sql } from '@codemirror/lang-sql';
 export { python, pythonLanguage } from '@codemirror/lang-python';
+export { collab } from '@codemirror/collab';

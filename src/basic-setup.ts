@@ -33,6 +33,7 @@ import { html, htmlLanguage } from "@codemirror/lang-html"
 import { javascript, javascriptLanguage } from "@codemirror/lang-javascript"
 import { sql, PostgreSQL } from "@codemirror/lang-sql"
 import { python, pythonLanguage } from "@codemirror/lang-python"
+import {collab} from "@codemirror/collab"
 
 export {
     Facet,
@@ -82,6 +83,7 @@ export {
     Text,
     combineConfig,
     NodeProp,
+    // Syntax Highlighting magic
     markdown,
     markdownLanguage,
     parseMixed,
@@ -92,5 +94,7 @@ export {
     sql,
     PostgreSQL,
     python,
-    pythonLanguage
+    pythonLanguage,
+    // Collaboration
+    collab
 }

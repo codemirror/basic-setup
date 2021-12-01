@@ -27511,4 +27511,54 @@ function python() {
     return new LanguageSupport(pythonLanguage);
 }
 
-export { Compartment, Decoration, EditorSelection, EditorState, EditorView, Facet, HighlightStyle, NodeProp, PostgreSQL, SelectionRange, StateEffect, StateField, StreamLanguage, Text, Transaction, TreeCursor, ViewPlugin, ViewUpdate, WidgetType, autocompletion, bracketMatching, closeBrackets, closeBracketsKeymap, combineConfig, commentKeymap, completionKeymap, defaultHighlightStyle, defaultKeymap, drawSelection, foldGutter, foldKeymap, highlightSelectionMatches, highlightSpecialChars, history, historyKeymap, html, htmlLanguage, indentLess, indentMore, indentOnInput, indentUnit, javascript, javascriptLanguage, julia as julia_andrey, julia$1 as julia_legacy, keymap, lineNumbers, markdown, markdownLanguage, parseMixed, placeholder, python, pythonLanguage, rectangularSelection, searchKeymap, sql, syntaxTree, tags$1 as tags };
+class LocalUpdate {
+    constructor(origin, changes, effects, clientID) {
+        this.origin = origin;
+        this.changes = changes;
+        this.effects = effects;
+        this.clientID = clientID;
+    }
+}
+class CollabState {
+    constructor(
+    // The version up to which changes have been confirmed.
+    version, 
+    // The local updates that havent been successfully sent to the
+    // server yet.
+    unconfirmed) {
+        this.version = version;
+        this.unconfirmed = unconfirmed;
+    }
+}
+const collabConfig = /*@__PURE__*/Facet.define({
+    combine(configs) {
+        let combined = combineConfig(configs, { startVersion: 0, clientID: null, sharedEffects: () => [] });
+        if (combined.clientID == null)
+            combined.clientID = (configs.length && configs[0].generatedID) || "";
+        return combined;
+    }
+});
+const collabReceive = /*@__PURE__*/Annotation.define();
+const collabField = /*@__PURE__*/StateField.define({
+    create(state) {
+        return new CollabState(state.facet(collabConfig).startVersion, []);
+    },
+    update(collab, tr) {
+        let isSync = tr.annotation(collabReceive);
+        if (isSync)
+            return isSync;
+        let { sharedEffects, clientID } = tr.startState.facet(collabConfig);
+        let effects = sharedEffects(tr);
+        if (effects.length || !tr.changes.empty)
+            return new CollabState(collab.version, collab.unconfirmed.concat(new LocalUpdate(tr, tr.changes, effects, clientID)));
+        return collab;
+    }
+});
+/**
+Create an instance of the collaborative editing plugin.
+*/
+function collab(config = {}) {
+    return [collabField, collabConfig.of(Object.assign({ generatedID: Math.floor(Math.random() * 1e9).toString(36) }, config))];
+}
+
+export { Compartment, Decoration, EditorSelection, EditorState, EditorView, Facet, HighlightStyle, NodeProp, PostgreSQL, SelectionRange, StateEffect, StateField, StreamLanguage, Text, Transaction, TreeCursor, ViewPlugin, ViewUpdate, WidgetType, autocompletion, bracketMatching, closeBrackets, closeBracketsKeymap, collab, combineConfig, commentKeymap, completionKeymap, defaultHighlightStyle, defaultKeymap, drawSelection, foldGutter, foldKeymap, highlightSelectionMatches, highlightSpecialChars, history, historyKeymap, html, htmlLanguage, indentLess, indentMore, indentOnInput, indentUnit, javascript, javascriptLanguage, julia as julia_andrey, julia$1 as julia_legacy, keymap, lineNumbers, markdown, markdownLanguage, parseMixed, placeholder, python, pythonLanguage, rectangularSelection, searchKeymap, sql, syntaxTree, tags$1 as tags };

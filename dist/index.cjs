@@ -25,6 +25,7 @@ var langHtml = require('@codemirror/lang-html');
 var langJavascript = require('@codemirror/lang-javascript');
 var langSql = require('@codemirror/lang-sql');
 var langPython = require('@codemirror/lang-python');
+var collab = require('@codemirror/collab');
 
 
 
@@ -259,4 +260,8 @@ Object.defineProperty(exports, 'python', {
 Object.defineProperty(exports, 'pythonLanguage', {
 	enumerable: true,
 	get: function () { return langPython.pythonLanguage; }
+});
+Object.defineProperty(exports, 'collab', {
+	enumerable: true,
+	get: function () { return collab.collab; }
 });

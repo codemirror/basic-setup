@@ -4856,4 +4856,29 @@ Python language support.
 */
 declare function python(): LanguageSupport;
 
-export { Compartment, Decoration, EditorSelection, EditorState, EditorView, Facet, HighlightStyle, NodeProp, PostgreSQL, SelectionRange, StateEffect, StateField, StreamLanguage, Text, Transaction, TreeCursor, ViewPlugin, ViewUpdate, WidgetType, autocompletion, bracketMatching, closeBrackets, closeBracketsKeymap, combineConfig, commentKeymap, completionKeymap, defaultHighlightStyle, defaultKeymap, drawSelection, foldGutter, foldKeymap, highlightSelectionMatches, highlightSpecialChars, history, historyKeymap, html, htmlLanguage, indentLess, indentMore, indentOnInput, indentUnit, javascript, javascriptLanguage, julia as julia_andrey, julia$1 as julia_legacy, keymap, lineNumbers, markdown, markdownLanguage, parseMixed, placeholder, python, pythonLanguage, rectangularSelection, searchKeymap, sql, syntaxTree, tags };
+declare type CollabConfig = {
+    /**
+    The starting document version. Defaults to 0.
+    */
+    startVersion?: number;
+    /**
+    This client's identifying [ID](https://codemirror.net/6/docs/ref/#collab.getClientID). Will be a
+    randomly generated string if not provided.
+    */
+    clientID?: string;
+    /**
+    It is possible to share information other than document changes
+    through this extension. If you provide this option, your
+    function will be called on each transaction, and the effects it
+    returns will be sent to the server, much like changes are. Such
+    effects are automatically remapped when conflicting remote
+    changes come in.
+    */
+    sharedEffects?: (tr: Transaction) => readonly StateEffect<any>[];
+};
+/**
+Create an instance of the collaborative editing plugin.
+*/
+declare function collab(config?: CollabConfig): Extension;
+
+export { Compartment, Decoration, EditorSelection, EditorState, EditorView, Facet, HighlightStyle, NodeProp, PostgreSQL, SelectionRange, StateEffect, StateField, StreamLanguage, Text, Transaction, TreeCursor, ViewPlugin, ViewUpdate, WidgetType, autocompletion, bracketMatching, closeBrackets, closeBracketsKeymap, collab, combineConfig, commentKeymap, completionKeymap, defaultHighlightStyle, defaultKeymap, drawSelection, foldGutter, foldKeymap, highlightSelectionMatches, highlightSpecialChars, history, historyKeymap, html, htmlLanguage, indentLess, indentMore, indentOnInput, indentUnit, javascript, javascriptLanguage, julia as julia_andrey, julia$1 as julia_legacy, keymap, lineNumbers, markdown, markdownLanguage, parseMixed, placeholder, python, pythonLanguage, rectangularSelection, searchKeymap, sql, syntaxTree, tags };

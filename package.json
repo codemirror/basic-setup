@@ -32,6 +32,7 @@
     "@codemirror/autocomplete": "^0.19.3",
     "@codemirror/basic-setup": "^0.19.0",
     "@codemirror/closebrackets": "^0.19.0",
+    "@codemirror/collab": "^0.19.0",
     "@codemirror/commands": "^0.19.5",
     "@codemirror/comment": "^0.19.0",
     "@codemirror/fold": "^0.19.0",
