@@ -29,6 +29,10 @@ var collab = require('@codemirror/collab');
 
 
 
+Object.defineProperty(exports, 'Annotation', {
+	enumerable: true,
+	get: function () { return state.Annotation; }
+});
 Object.defineProperty(exports, 'Compartment', {
 	enumerable: true,
 	get: function () { return state.Compartment; }

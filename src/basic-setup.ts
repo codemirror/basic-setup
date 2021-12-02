@@ -1,4 +1,4 @@
-import { EditorState, EditorSelection, Compartment, SelectionRange, Facet, StateField, StateEffect, Transaction, Text, combineConfig } from "@codemirror/state"
+import { EditorState, EditorSelection, Compartment, SelectionRange, Facet, StateField, StateEffect, Transaction, Text, combineConfig, Annotation } from "@codemirror/state"
 import { StreamLanguage } from "@codemirror/stream-parser"
 import { julia as julia_legacy } from "@codemirror/legacy-modes/mode/julia"
 import { julia as julia_andrey } from "lang-julia"
@@ -96,5 +96,6 @@ export {
     python,
     pythonLanguage,
     // Collaboration
-    collab
+    collab,
+    Annotation
 }

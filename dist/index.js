@@ -1,4 +1,4 @@
-export { Compartment, EditorSelection, EditorState, Facet, SelectionRange, StateEffect, StateField, Text, Transaction, combineConfig } from '@codemirror/state';
+export { Annotation, Compartment, EditorSelection, EditorState, Facet, SelectionRange, StateEffect, StateField, Text, Transaction, combineConfig } from '@codemirror/state';
 export { StreamLanguage } from '@codemirror/stream-parser';
 export { julia as julia_legacy } from '@codemirror/legacy-modes/mode/julia';
 export { julia as julia_andrey } from 'lang-julia';
