@@ -1,6 +1,6 @@
 {
   "name": "codemirror-pluto-setup",
-  "version": "0.19.1",
+  "version": "0.19.3",
   "description": "Example configuration for the CodeMirror code editor - as used by Pluto.jl",
   "scripts": {
     "test": "cm-runtests",
