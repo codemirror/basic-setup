@@ -3,11 +3,13 @@
   "version": "0.19.3",
   "description": "Example configuration for the CodeMirror code editor - as used by Pluto.jl",
   "scripts": {
+    "bundle": "rollup -c"
+  },
+  "oldscriptsthatwedontuseanymore": {
     "test": "cm-runtests",
     "prepare": "cm-buildhelper src/basic-setup.ts",
     "esbuild": "cm-buildhelper src/basic-setup.ts && esbuild dist/index.js --bundle --format=esm --outfile=dist/index.bundle.js",
-    "roll": "cm-buildhelper src/basic-setup.ts && rollup --config --configDebug",
-    "bundle": "rollup -c"
+    "roll": "cm-buildhelper src/basic-setup.ts && rollup --config --configDebug"
   },
   "keywords": [
     "editor",
