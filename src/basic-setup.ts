@@ -23,7 +23,7 @@ import { rectangularSelection } from "@codemirror/rectangular-selection"
 import { foldGutter, foldKeymap } from "@codemirror/fold"
 import { bracketMatching } from "@codemirror/matchbrackets"
 import { closeBrackets, closeBracketsKeymap } from "@codemirror/closebrackets"
-import { autocompletion } from "@codemirror/autocomplete"
+import * as autocomplete from "@codemirror/autocomplete";
 import { highlightSelectionMatches, searchKeymap } from "@codemirror/search"
 import { completionKeymap } from "@codemirror/autocomplete"
 import { commentKeymap } from "@codemirror/comment"
@@ -59,7 +59,7 @@ export {
     tags,
     HighlightStyle,
     syntaxTree,
-    autocompletion,
+    autocomplete,
     lineNumbers,
     highlightSpecialChars,
     foldGutter,

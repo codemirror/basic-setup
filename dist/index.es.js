@@ -18307,6 +18307,18 @@ function completeFromList(list) {
     };
 }
 /**
+Wrap the given completion source so that it will only fire when the
+cursor is in a syntax node with one of the given names.
+*/
+function ifIn(nodes, source) {
+    return (context) => {
+        for (let pos = syntaxTree(context.state).resolveInner(context.pos, -1); pos; pos = pos.parent)
+            if (nodes.indexOf(pos.name) > -1)
+                return source(context);
+        return null;
+    };
+}
+/**
 Wrap the given completion source so that it will not fire when the
 cursor is in a syntax node with one of the given names.
 */
@@ -19482,6 +19494,83 @@ const snippetPointerHandler = /*@__PURE__*/EditorView.domEventHandlers({
     }
 });
 
+function wordRE(wordChars) {
+    let escaped = wordChars.replace(/[\\[.+*?(){|^$]/g, "\\$&");
+    try {
+        return new RegExp(`[\\p{Alphabetic}\\p{Number}_${escaped}]+`, "ug");
+    }
+    catch (_a) {
+        return new RegExp(`[\w${escaped}]`, "g");
+    }
+}
+function mapRE(re, f) {
+    return new RegExp(f(re.source), re.unicode ? "u" : "");
+}
+const wordCaches = /*@__PURE__*/Object.create(null);
+function wordCache(wordChars) {
+    return wordCaches[wordChars] || (wordCaches[wordChars] = new WeakMap);
+}
+function storeWords(doc, wordRE, result, seen, ignoreAt) {
+    for (let lines = doc.iterLines(), pos = 0; !lines.next().done;) {
+        let { value } = lines, m;
+        wordRE.lastIndex = 0;
+        while (m = wordRE.exec(value)) {
+            if (!seen[m[0]] && pos + m.index != ignoreAt) {
+                result.push({ type: "text", label: m[0] });
+                seen[m[0]] = true;
+                if (result.length >= 2000 /* MaxList */)
+                    return;
+            }
+        }
+        pos += value.length + 1;
+    }
+}
+function collectWords(doc, cache, wordRE, to, ignoreAt) {
+    let big = doc.length >= 1000 /* MinCacheLen */;
+    let cached = big && cache.get(doc);
+    if (cached)
+        return cached;
+    let result = [], seen = Object.create(null);
+    if (doc.children) {
+        let pos = 0;
+        for (let ch of doc.children) {
+            if (ch.length >= 1000 /* MinCacheLen */) {
+                for (let c of collectWords(ch, cache, wordRE, to - pos, ignoreAt - pos)) {
+                    if (!seen[c.label]) {
+                        seen[c.label] = true;
+                        result.push(c);
+                    }
+                }
+            }
+            else {
+                storeWords(ch, wordRE, result, seen, ignoreAt - pos);
+            }
+            pos += ch.length + 1;
+        }
+    }
+    else {
+        storeWords(doc, wordRE, result, seen, ignoreAt);
+    }
+    if (big && result.length < 2000 /* MaxList */)
+        cache.set(doc, result);
+    return result;
+}
+/**
+A completion source that will scan the document for words (using a
+[character categorizer](https://codemirror.net/6/docs/ref/#state.EditorState.charCategorizer)), and
+return those as completions.
+*/
+const completeAnyWord = context => {
+    let wordChars = context.state.languageDataAt("wordChars", context.pos).join("");
+    let re = wordRE(wordChars);
+    let token = context.matchBefore(mapRE(re, s => s + "$"));
+    if (!token && !context.explicit)
+        return null;
+    let from = token ? token.from : context.pos;
+    let options = collectWords(context.state.doc, wordCache(wordChars), re, 50000 /* Range */, from);
+    return { from, options, span: mapRE(re, s => "^" + s) };
+};
+
 /**
 Returns an extension that enables autocompletion.
 */
@@ -19515,6 +19604,58 @@ const completionKeymap = [
     { key: "Enter", run: acceptCompletion }
 ];
 const completionKeymapExt = /*@__PURE__*/Prec.highest(/*@__PURE__*/keymap.computeN([completionConfig], state => state.facet(completionConfig).defaultKeymap ? [completionKeymap] : []));
+/**
+Get the current completion status. When completions are available,
+this will return `"active"`. When completions are pending (in the
+process of being queried), this returns `"pending"`. Otherwise, it
+returns `null`.
+*/
+function completionStatus(state) {
+    let cState = state.field(completionState, false);
+    return cState && cState.active.some(a => a.state == 1 /* Pending */) ? "pending"
+        : cState && cState.active.some(a => a.state != 0 /* Inactive */) ? "active" : null;
+}
+/**
+Returns the available completions as an array.
+*/
+function currentCompletions(state) {
+    var _a;
+    let open = (_a = state.field(completionState, false)) === null || _a === void 0 ? void 0 : _a.open;
+    return open ? open.options.map(o => o.completion) : [];
+}
+/**
+Return the currently selected completion, if any.
+*/
+function selectedCompletion(state) {
+    var _a;
+    let open = (_a = state.field(completionState, false)) === null || _a === void 0 ? void 0 : _a.open;
+    return open ? open.options[open.selected].completion : null;
+}
+
+var index = /*#__PURE__*/Object.freeze({
+    __proto__: null,
+    CompletionContext: CompletionContext,
+    acceptCompletion: acceptCompletion,
+    autocompletion: autocompletion,
+    clearSnippet: clearSnippet,
+    closeCompletion: closeCompletion,
+    completeAnyWord: completeAnyWord,
+    completeFromList: completeFromList,
+    completionKeymap: completionKeymap,
+    completionStatus: completionStatus,
+    currentCompletions: currentCompletions,
+    ifIn: ifIn,
+    ifNotIn: ifNotIn,
+    moveCompletionSelection: moveCompletionSelection,
+    nextSnippetField: nextSnippetField,
+    pickedCompletion: pickedCompletion,
+    prevSnippetField: prevSnippetField,
+    selectedCompletion: selectedCompletion,
+    snippet: snippet,
+    snippetCompletion: snippetCompletion,
+    snippetKeymap: snippetKeymap,
+    startCompletion: startCompletion
+});
 
 function delimitedStrategy(context, units, closing) {
     let after = context.textAfter;
@@ -27770,4 +27911,4 @@ function collab(config = {}) {
     return [collabField, collabConfig.of(Object.assign({ generatedID: Math.floor(Math.random() * 1e9).toString(36) }, config))];
 }
 
-export { Annotation, Compartment, Decoration, EditorSelection, EditorState, EditorView, Facet, HighlightStyle, NodeProp, PostgreSQL, SelectionRange, StateEffect, StateField, StreamLanguage, Text, Transaction, TreeCursor, ViewPlugin, ViewUpdate, WidgetType, autocompletion, bracketMatching, closeBrackets, closeBracketsKeymap, collab, combineConfig, commentKeymap, completionKeymap, defaultHighlightStyle, defaultKeymap, drawSelection, foldGutter, foldKeymap, highlightSelectionMatches, highlightSpecialChars, history, historyKeymap, html, htmlLanguage, indentLess, indentMore, indentOnInput, indentUnit, javascript, javascriptLanguage, julia as julia_andrey, julia$1 as julia_legacy, keymap, lineNumbers, markdown, markdownLanguage, parseMixed, placeholder, python, pythonLanguage, rectangularSelection, searchKeymap, sql, syntaxTree, tags$1 as tags };
+export { Annotation, Compartment, Decoration, EditorSelection, EditorState, EditorView, Facet, HighlightStyle, NodeProp, PostgreSQL, SelectionRange, StateEffect, StateField, StreamLanguage, Text, Transaction, TreeCursor, ViewPlugin, ViewUpdate, WidgetType, index as autocomplete, bracketMatching, closeBrackets, closeBracketsKeymap, collab, combineConfig, commentKeymap, completionKeymap, defaultHighlightStyle, defaultKeymap, drawSelection, foldGutter, foldKeymap, highlightSelectionMatches, highlightSpecialChars, history, historyKeymap, html, htmlLanguage, indentLess, indentMore, indentOnInput, indentUnit, javascript, javascriptLanguage, julia as julia_andrey, julia$1 as julia_legacy, keymap, lineNumbers, markdown, markdownLanguage, parseMixed, placeholder, python, pythonLanguage, rectangularSelection, searchKeymap, sql, syntaxTree, tags$1 as tags };
