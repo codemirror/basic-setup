@@ -1,3 +1,9 @@
+## 0.19.1 (2021-12-13)
+
+### New features
+
+The basic setup now includes the `dropCursor` extension.
+
 ## 0.19.0 (2021-08-11)
 
 ### Breaking changes
