@@ -24538,11 +24538,16 @@ function resolveConfig(spec) {
     if (!rest || !conf)
         return conf || rest;
     let conc = (a, b) => (a || none).concat(b || none);
-    return { props: conc(conf.props, rest.props),
+    let wrapA = conf.wrap, wrapB = rest.wrap;
+    return {
+        props: conc(conf.props, rest.props),
         defineNodes: conc(conf.defineNodes, rest.defineNodes),
         parseBlock: conc(conf.parseBlock, rest.parseBlock),
         parseInline: conc(conf.parseInline, rest.parseInline),
-        remove: conc(conf.remove, rest.remove) };
+        remove: conc(conf.remove, rest.remove),
+        wrap: !wrapA ? wrapB : !wrapB ? wrapA :
+            (inner, input, fragments, ranges) => wrapA(wrapB(inner, input, fragments, ranges), input, fragments, ranges)
+    };
 }
 function findName(names, name) {
     let found = names.indexOf(name);
@@ -25073,11 +25078,11 @@ class FragmentCursor {
         return tree && tree.prop(NodeProp.contextHash) == hash;
     }
     takeNodes(cx) {
-        let cur = this.cursor, off = this.fragment.offset;
+        let cur = this.cursor, off = this.fragment.offset, fragEnd = this.fragmentEnd - (this.fragment.openEnd ? 1 : 0);
         let start = cx.absoluteLineStart, end = start, blockI = cx.block.children.length;
         let prevEnd = end, prevI = blockI;
         for (;;) {
-            if (cur.to - off >= this.fragmentEnd) {
+            if (cur.to - off > fragEnd) {
                 if (cur.type.isAnonymous && cur.firstChild())
                     continue;
                 break;
@@ -27911,4 +27916,4 @@ function collab(config = {}) {
     return [collabField, collabConfig.of(Object.assign({ generatedID: Math.floor(Math.random() * 1e9).toString(36) }, config))];
 }
 
-export { Annotation, Compartment, Decoration, EditorSelection, EditorState, EditorView, Facet, HighlightStyle, NodeProp, PostgreSQL, SelectionRange, StateEffect, StateField, StreamLanguage, Text, Transaction, TreeCursor, ViewPlugin, ViewUpdate, WidgetType, index as autocomplete, bracketMatching, closeBrackets, closeBracketsKeymap, collab, combineConfig, commentKeymap, completionKeymap, defaultHighlightStyle, defaultKeymap, drawSelection, foldGutter, foldKeymap, highlightSelectionMatches, highlightSpecialChars, history, historyKeymap, html, htmlLanguage, indentLess, indentMore, indentOnInput, indentUnit, javascript, javascriptLanguage, julia as julia_andrey, julia$1 as julia_legacy, keymap, lineNumbers, markdown, markdownLanguage, parseMixed, placeholder, python, pythonLanguage, rectangularSelection, searchKeymap, sql, syntaxTree, tags$1 as tags };
+export { Annotation, Compartment, Decoration, EditorSelection, EditorState, EditorView, Facet, HighlightStyle, NodeProp, PostgreSQL, SelectionRange, StateEffect, StateField, StreamLanguage, Text, Transaction, TreeCursor, ViewPlugin, ViewUpdate, WidgetType, index as autocomplete, bracketMatching, closeBrackets, closeBracketsKeymap, collab, combineConfig, commentKeymap, completionKeymap, defaultHighlightStyle, defaultKeymap, drawSelection, foldGutter, foldKeymap, highlightSelectionMatches, highlightSpecialChars, history, historyKeymap, html, htmlLanguage, indentLess, indentMore, indentOnInput, indentUnit, javascript, javascriptLanguage, julia as julia_andrey, julia$1 as julia_legacy, keymap, lineNumbers, markdown, markdownLanguage, parseCode, parseMixed, placeholder, python, pythonLanguage, rectangularSelection, searchKeymap, sql, syntaxTree, tags$1 as tags };

@@ -56,7 +56,7 @@
     "@codemirror/stream-parser": "^0.19.2",
     "@codemirror/view": "^0.19.9",
     "@lezer/common": "^0.15.7",
-    "@lezer/markdown": "^0.15.0",
+    "@lezer/markdown": "^0.15.3",
     "@lezer/python": "^0.15.0",
     "esbuild": "^0.12.28",
     "lang-julia": "^0.1.0",

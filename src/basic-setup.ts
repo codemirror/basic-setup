@@ -29,6 +29,7 @@ import { completionKeymap } from "@codemirror/autocomplete"
 import { commentKeymap } from "@codemirror/comment"
 import { TreeCursor, NodeProp, parseMixed } from "@lezer/common"
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown"
+import { parseCode } from "@lezer/markdown"
 import { html, htmlLanguage } from "@codemirror/lang-html"
 import { javascript, javascriptLanguage } from "@codemirror/lang-javascript"
 import { sql, PostgreSQL } from "@codemirror/lang-sql"
@@ -86,6 +87,7 @@ export {
     // Syntax Highlighting magic
     markdown,
     markdownLanguage,
+    parseCode,
     parseMixed,
     html,
     htmlLanguage,
