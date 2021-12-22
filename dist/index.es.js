@@ -4459,20 +4459,20 @@ function materialize(cursor) {
     let buf = base.children[i], b = buf.buffer;
     // Split a level in the buffer, putting the nodes before and after
     // the child that contains `node` into new buffers.
-    function split(startI, endI, type, innerOffset) {
+    function split(startI, endI, type, innerOffset, length) {
         let i = startI;
         while (b[i + 2] + off <= node.from)
             i = b[i + 3];
         let children = [], positions = [];
         sliceBuf(buf, startI, i, children, positions, innerOffset);
-        let isTarget = b[i + 1] + off == node.from && b[i + 2] + off == node.to && b[i] == node.type.id;
-        children.push(isTarget ? node.toTree() : split(i + 4, b[i + 3], buf.set.types[b[i]], b[i + 1]));
-        positions.push(b[i + 1] - innerOffset);
+        let from = b[i + 1], to = b[i + 2];
+        let isTarget = from + off == node.from && to + off == node.to && b[i] == node.type.id;
+        children.push(isTarget ? node.toTree() : split(i + 4, b[i + 3], buf.set.types[b[i]], from, to - from));
+        positions.push(from - innerOffset);
         sliceBuf(buf, b[i + 3], endI, children, positions, innerOffset);
-        let last = children.length - 1;
-        return new Tree(type, children, positions, positions[last] + children[last].length);
+        return new Tree(type, children, positions, length);
     }
-    base.children[i] = split(0, b.length, NodeType.none, 0);
+    base.children[i] = split(0, b.length, NodeType.none, 0, buf.length);
     // Move the cursor back to the target node
     for (let d = 0; d <= depth; d++)
         cursor.childAfter(node.from);
@@ -5097,8 +5097,8 @@ class RangeSet {
     the given size. When -1, all ranges are compared.
     */
     minPointSize = -1) {
-        let a = oldSets.filter(set => set.maxPoint >= 500 /* BigPointSize */ || !set.isEmpty && set.maxPoint >= minPointSize);
-        let b = newSets.filter(set => set.maxPoint >= 500 /* BigPointSize */ || !set.isEmpty && set.maxPoint >= minPointSize);
+        let a = oldSets.filter(set => set.maxPoint > 0 || !set.isEmpty && set.maxPoint >= minPointSize);
+        let b = newSets.filter(set => set.maxPoint > 0 || !set.isEmpty && set.maxPoint >= minPointSize);
         let sharedChunks = findSharedChunks(a, b, textDiff);
         let sideA = new SpanCursor(a, sharedChunks, minPointSize);
         let sideB = new SpanCursor(b, sharedChunks, minPointSize);
@@ -5145,7 +5145,8 @@ class RangeSet {
     size are taken into account.
     */
     minPointSize = -1) {
-        let cursor = new SpanCursor(sets, null, minPointSize).goto(from), pos = from;
+        var _a;
+        let cursor = new SpanCursor(sets, null, minPointSize, (_a = iterator.filterPoint) === null || _a === void 0 ? void 0 : _a.bind(iterator)).goto(from), pos = from;
         let open = cursor.openStart;
         for (;;) {
             let curTo = Math.min(cursor.to, to);
@@ -5298,7 +5299,7 @@ function findSharedChunks(a, b, textDiff) {
     let inA = new Map();
     for (let set of a)
         for (let i = 0; i < set.chunk.length; i++)
-            if (set.chunk[i].maxPoint < 500 /* BigPointSize */)
+            if (set.chunk[i].maxPoint <= 0)
                 inA.set(set.chunk[i], set.chunkPos[i]);
     let shared = new Set();
     for (let set of b)
@@ -5452,8 +5453,9 @@ function heapBubble(heap, index) {
     }
 }
 class SpanCursor {
-    constructor(sets, skip, minPoint) {
+    constructor(sets, skip, minPoint, filterPoint = () => true) {
         this.minPoint = minPoint;
+        this.filterPoint = filterPoint;
         this.active = [];
         this.activeTo = [];
         this.activeRank = [];
@@ -5532,8 +5534,11 @@ class SpanCursor {
                     this.addActive(trackOpen);
                     this.cursor.next();
                 }
-                else if (wasPoint && this.cursor.to == this.to && this.cursor.from < this.cursor.to && nextVal.endSide == this.endSide) {
+                else if (wasPoint && this.cursor.to == this.to && this.cursor.from < this.cursor.to) {
                     // Ignore any non-empty points that end precisely at the end of the prev point
+                    this.cursor.next();
+                }
+                else if (!this.filterPoint(this.cursor.from, this.cursor.to, this.cursor.value, this.cursor.rank)) {
                     this.cursor.next();
                 }
                 else { // New point
@@ -5849,8 +5854,7 @@ function windowRect(win) {
     return { left: 0, right: win.innerWidth,
         top: 0, bottom: win.innerHeight };
 }
-const ScrollSpace = 5;
-function scrollRectIntoView(dom, rect, side, center) {
+function scrollRectIntoView(dom, rect, side, x, y, xMargin, yMargin, ltr) {
     let doc = dom.ownerDocument, win = doc.defaultView;
     for (let cur = dom; cur;) {
         if (cur.nodeType == 1) { // Element
@@ -5869,38 +5873,42 @@ function scrollRectIntoView(dom, rect, side, center) {
                     top: rect.top, bottom: rect.top + cur.clientHeight };
             }
             let moveX = 0, moveY = 0;
-            if (center) {
+            if (y == "nearest") {
+                if (rect.top < bounding.top) {
+                    moveY = -(bounding.top - rect.top + yMargin);
+                    if (side > 0 && rect.bottom > bounding.bottom + moveY)
+                        moveY = rect.bottom - bounding.bottom + moveY + yMargin;
+                }
+                else if (rect.bottom > bounding.bottom) {
+                    moveY = rect.bottom - bounding.bottom + yMargin;
+                    if (side < 0 && (rect.top - moveY) < bounding.top)
+                        moveY = -(bounding.top + moveY - rect.top + yMargin);
+                }
+            }
+            else {
                 let rectHeight = rect.bottom - rect.top, boundingHeight = bounding.bottom - bounding.top;
-                let targetTop;
-                if (rectHeight <= boundingHeight)
-                    targetTop = rect.top + rectHeight / 2 - boundingHeight / 2;
-                else if (side < 0)
-                    targetTop = rect.top - ScrollSpace;
-                else
-                    targetTop = rect.bottom + ScrollSpace - boundingHeight;
+                let targetTop = y == "center" && rectHeight <= boundingHeight ? rect.top + rectHeight / 2 - boundingHeight / 2 :
+                    y == "start" || y == "center" && side < 0 ? rect.top - yMargin :
+                        rect.bottom - boundingHeight + yMargin;
                 moveY = targetTop - bounding.top;
-                if (Math.abs(moveY) <= 1)
-                    moveY = 0;
             }
-            else if (rect.top < bounding.top) {
-                moveY = -(bounding.top - rect.top + ScrollSpace);
-                if (side > 0 && rect.bottom > bounding.bottom + moveY)
-                    moveY = rect.bottom - bounding.bottom + moveY + ScrollSpace;
+            if (x == "nearest") {
+                if (rect.left < bounding.left) {
+                    moveX = -(bounding.left - rect.left + xMargin);
+                    if (side > 0 && rect.right > bounding.right + moveX)
+                        moveX = rect.right - bounding.right + moveX + xMargin;
+                }
+                else if (rect.right > bounding.right) {
+                    moveX = rect.right - bounding.right + xMargin;
+                    if (side < 0 && rect.left < bounding.left + moveX)
+                        moveX = -(bounding.left + moveX - rect.left + xMargin);
+                }
             }
-            else if (rect.bottom > bounding.bottom) {
-                moveY = rect.bottom - bounding.bottom + ScrollSpace;
-                if (side < 0 && (rect.top - moveY) < bounding.top)
-                    moveY = -(bounding.top + moveY - rect.top + ScrollSpace);
-            }
-            if (rect.left < bounding.left) {
-                moveX = -(bounding.left - rect.left + ScrollSpace);
-                if (side > 0 && rect.right > bounding.right + moveX)
-                    moveX = rect.right - bounding.right + moveX + ScrollSpace;
-            }
-            else if (rect.right > bounding.right) {
-                moveX = rect.right - bounding.right + ScrollSpace;
-                if (side < 0 && rect.left < bounding.left + moveX)
-                    moveX = -(bounding.left + moveX - rect.left + ScrollSpace);
+            else {
+                let targetLeft = x == "center" ? rect.left + (rect.right - rect.left) / 2 - (bounding.right - bounding.left) / 2 :
+                    (x == "start") == ltr ? rect.left - xMargin :
+                        rect.right - (bounding.right - bounding.left) + xMargin;
+                moveX = targetLeft - bounding.left;
             }
             if (moveX || moveY) {
                 if (top) {
@@ -5924,7 +5932,7 @@ function scrollRectIntoView(dom, rect, side, center) {
             if (top)
                 break;
             cur = cur.assignedSlot || cur.parentNode;
-            center = false;
+            x = y = "nearest";
         }
         else if (cur.nodeType == 11) { // A shadow root
             cur = cur.host;
@@ -6011,6 +6019,10 @@ function getRoot(node) {
     }
     return null;
 }
+function clearAttributes(node) {
+    while (node.attributes.length)
+        node.removeAttributeNode(node.attributes[0]);
+}
 
 class DOMPos {
     constructor(node, offset, precise = true) {
@@ -6057,14 +6069,16 @@ class ContentView {
     // given position.
     coordsAt(_pos, _side) { return null; }
     sync(track) {
-        var _a;
         if (this.dirty & 2 /* Node */) {
             let parent = this.dom;
             let pos = parent.firstChild;
             for (let child of this.children) {
                 if (child.dirty) {
-                    if (!child.dom && pos && !((_a = ContentView.get(pos)) === null || _a === void 0 ? void 0 : _a.parent))
-                        child.reuseDOM(pos);
+                    if (!child.dom && pos) {
+                        let contentView = ContentView.get(pos);
+                        if (!contentView || !contentView.parent && contentView.constructor == child.constructor)
+                            child.reuseDOM(pos);
+                    }
                     child.sync(track);
                     child.dirty = 0 /* Not */;
                 }
@@ -6092,7 +6106,7 @@ class ContentView {
                 }
         }
     }
-    reuseDOM(_dom) { return false; }
+    reuseDOM(_dom) { }
     localPosFromDOM(node, offset) {
         let after;
         if (node == this.dom) {
@@ -6391,10 +6405,8 @@ class TextView extends ContentView {
         }
     }
     reuseDOM(dom) {
-        if (dom.nodeType != 3)
-            return false;
-        this.createDOM(dom);
-        return true;
+        if (dom.nodeType == 3)
+            this.createDOM(dom);
     }
     merge(from, to, source) {
         if (source && (!(source instanceof TextView) || this.length - (to - from) + source.length > MaxJoinLen))
@@ -6406,6 +6418,7 @@ class TextView extends ContentView {
     split(from) {
         let result = new TextView(this.text.slice(from));
         this.text = this.text.slice(0, from);
+        this.markDirty();
         return result;
     }
     localPosFromDOM(node, offset) {
@@ -6428,18 +6441,26 @@ class MarkView extends ContentView {
         for (let ch of children)
             ch.setParent(this);
     }
-    createDOM() {
-        let dom = document.createElement(this.mark.tagName);
+    setAttrs(dom) {
+        clearAttributes(dom);
         if (this.mark.class)
             dom.className = this.mark.class;
         if (this.mark.attrs)
             for (let name in this.mark.attrs)
                 dom.setAttribute(name, this.mark.attrs[name]);
-        this.setDOM(dom);
+        return dom;
+    }
+    reuseDOM(node) {
+        if (node.nodeName == this.mark.tagName.toUpperCase()) {
+            this.setDOM(node);
+            this.dirty |= 4 /* Attrs */ | 2 /* Node */;
+        }
     }
     sync(track) {
-        if (!this.dom || (this.dirty & 4 /* Attrs */))
-            this.createDOM();
+        if (!this.dom)
+            this.setDOM(this.setAttrs(document.createElement(this.mark.tagName)));
+        else if (this.dirty & 4 /* Attrs */)
+            this.setAttrs(this.dom);
         super.sync(track);
     }
     merge(from, to, source, _hasStart, openStart, openEnd) {
@@ -6583,8 +6604,7 @@ class WidgetView extends ContentView {
 }
 class CompositionView extends WidgetView {
     domAtPos(pos) { return new DOMPos(this.widget.text, pos); }
-    sync() { if (!this.dom)
-        this.setDOM(this.widget.toDOM()); }
+    sync() { this.setDOM(this.widget.toDOM()); }
     localPosFromDOM(node, offset) {
         return !offset ? 0 : node.nodeType == 3 ? Math.min(offset, this.length) : this.length;
     }
@@ -6593,6 +6613,9 @@ class CompositionView extends WidgetView {
     coordsAt(pos, side) { return textCoords(this.widget.text, pos, side); }
     get isEditable() { return true; }
 }
+// Use two characters on Android, to prevent Chrome from closing the
+// virtual keyboard when backspacing after a widget (#602).
+const ZeroWidthSpace = browser.android ? "\u200b\u200b" : "\u200b";
 // These are drawn around uneditable widgets to avoid a number of
 // browser bugs that show up when the cursor is directly next to
 // uneditable inline content.
@@ -6609,12 +6632,13 @@ class WidgetBufferView extends ContentView {
     split() { return new WidgetBufferView(this.side); }
     sync() {
         if (!this.dom)
-            this.setDOM(document.createTextNode("\u200b"));
-        else if (this.dirty && this.dom.nodeValue != "\u200b")
-            this.dom.nodeValue = "\u200b";
+            this.setDOM(document.createTextNode(ZeroWidthSpace));
+        else if (this.dirty && this.dom.nodeValue != ZeroWidthSpace)
+            this.dom.nodeValue = ZeroWidthSpace;
     }
     getSide() { return this.side; }
     domAtPos(pos) { return DOMPos.before(this.dom); }
+    localPosFromDOM() { return 0; }
     domBoundsAround() { return null; }
     coordsAt(pos) {
         let rects = clientRectsFor(this.dom);
@@ -7044,10 +7068,21 @@ class LineView extends ContentView {
     domAtPos(pos) {
         return inlineDOMAtPos(this.dom, this.children, pos);
     }
+    reuseDOM(node) {
+        if (node.nodeName == "DIV") {
+            this.setDOM(node);
+            this.dirty |= 4 /* Attrs */ | 2 /* Node */;
+        }
+    }
     sync(track) {
         var _a;
-        if (!this.dom || (this.dirty & 4 /* Attrs */)) {
+        if (!this.dom) {
             this.setDOM(document.createElement("div"));
+            this.dom.className = "cm-line";
+            this.prevAttrs = this.attrs ? null : undefined;
+        }
+        else if (this.dirty & 4 /* Attrs */) {
+            clearAttributes(this.dom);
             this.dom.className = "cm-line";
             this.prevAttrs = this.attrs ? null : undefined;
         }
@@ -7089,16 +7124,17 @@ class LineView extends ContentView {
     become(_other) { return false; }
     get type() { return BlockType.Text; }
     static find(docView, pos) {
-        for (let i = 0, off = 0;; i++) {
+        for (let i = 0, off = 0; i < docView.children.length; i++) {
             let block = docView.children[i], end = off + block.length;
             if (end >= pos) {
                 if (block instanceof LineView)
                     return block;
-                if (block.length)
-                    return null;
+                if (end > pos)
+                    break;
             }
             off = end + block.breakAfter;
         }
+        return null;
     }
 }
 class BlockWidgetView extends ContentView {
@@ -7159,10 +7195,11 @@ class BlockWidgetView extends ContentView {
 }
 
 class ContentBuilder {
-    constructor(doc, pos, end) {
+    constructor(doc, pos, end, disallowBlockEffectsBelow) {
         this.doc = doc;
         this.pos = pos;
         this.end = end;
+        this.disallowBlockEffectsBelow = disallowBlockEffectsBelow;
         this.content = [];
         this.curLine = null;
         this.breakAtStart = 0;
@@ -7291,8 +7328,15 @@ class ContentBuilder {
         if (this.openStart < 0)
             this.openStart = openStart;
     }
-    static build(text, from, to, decorations) {
-        let builder = new ContentBuilder(text, from, to);
+    filterPoint(from, to, value, index) {
+        if (index >= this.disallowBlockEffectsBelow || !(value instanceof PointDecoration))
+            return true;
+        if (value.block)
+            throw new RangeError("Block decorations may not be specified via plugins");
+        return to < this.doc.lineAt(this.pos).to;
+    }
+    static build(text, from, to, decorations, pluginDecorationLength) {
+        let builder = new ContentBuilder(text, from, to, pluginDecorationLength);
         builder.openEnd = RangeSet.spans(decorations, from, to, builder);
         if (builder.openStart < 0)
             builder.openStart = builder.openEnd;
@@ -7322,12 +7366,27 @@ const mouseSelectionStyle = /*@__PURE__*/Facet.define();
 const exceptionSink = /*@__PURE__*/Facet.define();
 const updateListener = /*@__PURE__*/Facet.define();
 const inputHandler = /*@__PURE__*/Facet.define();
+// FIXME remove
 const scrollTo = /*@__PURE__*/StateEffect.define({
     map: (range, changes) => range.map(changes)
 });
+// FIXME remove
 const centerOn = /*@__PURE__*/StateEffect.define({
     map: (range, changes) => range.map(changes)
 });
+class ScrollTarget {
+    constructor(range, y = "nearest", x = "nearest", yMargin = 5, xMargin = 5) {
+        this.range = range;
+        this.y = y;
+        this.x = x;
+        this.yMargin = yMargin;
+        this.xMargin = xMargin;
+    }
+    map(changes) {
+        return changes.empty ? this : new ScrollTarget(this.range.map(changes), this.y, this.x, this.yMargin, this.xMargin);
+    }
+}
+const scrollIntoView$1 = /*@__PURE__*/StateEffect.define({ map: (t, ch) => t.map(ch) });
 /**
 Log or report an unhandled exception in client code. Should
 probably only be used by extension code that allows client code to
@@ -7400,11 +7459,13 @@ This field can be used by plugins to provide
 **Note**: For reasons of data flow (plugins are only updated
 after the viewport is computed), decorations produced by plugins
 are _not_ taken into account when predicting the vertical layout
-structure of the editor. Thus, things like large widgets or big
-replacements (i.e. code folding) should be provided through the
-state-level [`decorations` facet](https://codemirror.net/6/docs/ref/#view.EditorView^decorations),
-not this plugin field. Specifically, replacing decorations that
-cross line boundaries will break if provided through a plugin.
+structure of the editor. They **must not** introduce block
+widgets (that will raise an error) or replacing decorations that
+cover line breaks (these will be ignored if they occur). Such
+decorations, or others that cause a large amount of vertical
+size shift compared to the undecorated content, should be
+provided through the state-level [`decorations`
+facet](https://codemirror.net/6/docs/ref/#view.EditorView^decorations) instead.
 */
 PluginField.decorations = /*@__PURE__*/PluginField.define();
 /**
@@ -7637,8 +7698,6 @@ class ViewUpdate {
             view.inputState.notifiedFocused = focus;
             this.flags |= 1 /* Focus */;
         }
-        if (this.docChanged)
-            this.flags |= 2 /* Height */;
     }
     /**
     Tells you whether the [viewport](https://codemirror.net/6/docs/ref/#view.EditorView.viewport) or
@@ -7649,14 +7708,15 @@ class ViewUpdate {
         return (this.flags & 4 /* Viewport */) > 0;
     }
     /**
-    Indicates whether the line height in the editor changed in this update.
+    Indicates whether the height of an element in the editor changed
+    in this update.
     */
     get heightChanged() {
         return (this.flags & 2 /* Height */) > 0;
     }
     /**
-    Returns true when the document changed or the size of the editor
-    or the lines or characters within it has changed.
+    Returns true when the document was modified or the size of the
+    editor, or elements within the editor, changed.
     */
     get geometryChanged() {
         return this.docChanged || (this.flags & (8 /* Geometry */ | 2 /* Height */)) > 0;
@@ -7683,488 +7743,6 @@ class ViewUpdate {
     @internal
     */
     get empty() { return this.flags == 0 && this.transactions.length == 0; }
-}
-
-class DocView extends ContentView {
-    constructor(view) {
-        super();
-        this.view = view;
-        this.compositionDeco = Decoration.none;
-        this.decorations = [];
-        // Track a minimum width for the editor. When measuring sizes in
-        // measureVisibleLineHeights, this is updated to point at the width
-        // of a given element and its extent in the document. When a change
-        // happens in that range, these are reset. That way, once we've seen
-        // a line/element of a given length, we keep the editor wide enough
-        // to fit at least that element, until it is changed, at which point
-        // we forget it again.
-        this.minWidth = 0;
-        this.minWidthFrom = 0;
-        this.minWidthTo = 0;
-        // Track whether the DOM selection was set in a lossy way, so that
-        // we don't mess it up when reading it back it
-        this.impreciseAnchor = null;
-        this.impreciseHead = null;
-        this.forceSelection = false;
-        // Used by the resize observer to ignore resizes that we caused
-        // ourselves
-        this.lastUpdate = Date.now();
-        this.setDOM(view.contentDOM);
-        this.children = [new LineView];
-        this.children[0].setParent(this);
-        this.updateInner([new ChangedRange(0, 0, 0, view.state.doc.length)], this.updateDeco(), 0);
-    }
-    get root() { return this.view.root; }
-    get editorView() { return this.view; }
-    get length() { return this.view.state.doc.length; }
-    // Update the document view to a given state. scrollIntoView can be
-    // used as a hint to compute a new viewport that includes that
-    // position, if we know the editor is going to scroll that position
-    // into view.
-    update(update) {
-        let changedRanges = update.changedRanges;
-        if (this.minWidth > 0 && changedRanges.length) {
-            if (!changedRanges.every(({ fromA, toA }) => toA < this.minWidthFrom || fromA > this.minWidthTo)) {
-                this.minWidth = 0;
-            }
-            else {
-                this.minWidthFrom = update.changes.mapPos(this.minWidthFrom, 1);
-                this.minWidthTo = update.changes.mapPos(this.minWidthTo, 1);
-            }
-        }
-        if (this.view.inputState.composing < 0)
-            this.compositionDeco = Decoration.none;
-        else if (update.transactions.length)
-            this.compositionDeco = computeCompositionDeco(this.view, update.changes);
-        // When the DOM nodes around the selection are moved to another
-        // parent, Chrome sometimes reports a different selection through
-        // getSelection than the one that it actually shows to the user.
-        // This forces a selection update when lines are joined to work
-        // around that. Issue #54
-        if ((browser.ie || browser.chrome) && !this.compositionDeco.size && update &&
-            update.state.doc.lines != update.startState.doc.lines)
-            this.forceSelection = true;
-        let prevDeco = this.decorations, deco = this.updateDeco();
-        let decoDiff = findChangedDeco(prevDeco, deco, update.changes);
-        changedRanges = ChangedRange.extendWithRanges(changedRanges, decoDiff);
-        if (this.dirty == 0 /* Not */ && changedRanges.length == 0) {
-            return false;
-        }
-        else {
-            this.updateInner(changedRanges, deco, update.startState.doc.length);
-            if (update.transactions.length)
-                this.lastUpdate = Date.now();
-            return true;
-        }
-    }
-    reset(sel) {
-        if (this.dirty) {
-            this.view.observer.ignore(() => this.view.docView.sync());
-            this.dirty = 0 /* Not */;
-            this.updateSelection(true);
-        }
-        else {
-            this.updateSelection();
-        }
-    }
-    // Used by update and the constructor do perform the actual DOM
-    // update
-    updateInner(changes, deco, oldLength) {
-        this.view.viewState.mustMeasureContent = true;
-        this.updateChildren(changes, deco, oldLength);
-        let { observer } = this.view;
-        observer.ignore(() => {
-            // Lock the height during redrawing, since Chrome sometimes
-            // messes with the scroll position during DOM mutation (though
-            // no relayout is triggered and I cannot imagine how it can
-            // recompute the scroll position without a layout)
-            this.dom.style.height = this.view.viewState.contentHeight + "px";
-            this.dom.style.minWidth = this.minWidth ? this.minWidth + "px" : "";
-            // Chrome will sometimes, when DOM mutations occur directly
-            // around the selection, get confused and report a different
-            // selection from the one it displays (issue #218). This tries
-            // to detect that situation.
-            let track = browser.chrome || browser.ios ? { node: observer.selectionRange.focusNode, written: false } : undefined;
-            this.sync(track);
-            this.dirty = 0 /* Not */;
-            if (track && (track.written || observer.selectionRange.focusNode != track.node))
-                this.forceSelection = true;
-            this.dom.style.height = "";
-        });
-        let gaps = [];
-        if (this.view.viewport.from || this.view.viewport.to < this.view.state.doc.length)
-            for (let child of this.children)
-                if (child instanceof BlockWidgetView && child.widget instanceof BlockGapWidget)
-                    gaps.push(child.dom);
-        observer.updateGaps(gaps);
-    }
-    updateChildren(changes, deco, oldLength) {
-        let cursor = this.childCursor(oldLength);
-        for (let i = changes.length - 1;; i--) {
-            let next = i >= 0 ? changes[i] : null;
-            if (!next)
-                break;
-            let { fromA, toA, fromB, toB } = next;
-            let { content, breakAtStart, openStart, openEnd } = ContentBuilder.build(this.view.state.doc, fromB, toB, deco);
-            let { i: toI, off: toOff } = cursor.findPos(toA, 1);
-            let { i: fromI, off: fromOff } = cursor.findPos(fromA, -1);
-            replaceRange(this, fromI, fromOff, toI, toOff, content, breakAtStart, openStart, openEnd);
-        }
-    }
-    // Sync the DOM selection to this.state.selection
-    updateSelection(mustRead = false, fromPointer = false) {
-        if (mustRead)
-            this.view.observer.readSelectionRange();
-        if (!(fromPointer || this.mayControlSelection()) ||
-            browser.ios && this.view.inputState.rapidCompositionStart)
-            return;
-        let force = this.forceSelection;
-        this.forceSelection = false;
-        let main = this.view.state.selection.main;
-        // FIXME need to handle the case where the selection falls inside a block range
-        let anchor = this.domAtPos(main.anchor);
-        let head = main.empty ? anchor : this.domAtPos(main.head);
-        // Always reset on Firefox when next to an uneditable node to
-        // avoid invisible cursor bugs (#111)
-        if (browser.gecko && main.empty && betweenUneditable(anchor)) {
-            let dummy = document.createTextNode("");
-            this.view.observer.ignore(() => anchor.node.insertBefore(dummy, anchor.node.childNodes[anchor.offset] || null));
-            anchor = head = new DOMPos(dummy, 0);
-            force = true;
-        }
-        let domSel = this.view.observer.selectionRange;
-        // If the selection is already here, or in an equivalent position, don't touch it
-        if (force || !domSel.focusNode ||
-            !isEquivalentPosition(anchor.node, anchor.offset, domSel.anchorNode, domSel.anchorOffset) ||
-            !isEquivalentPosition(head.node, head.offset, domSel.focusNode, domSel.focusOffset)) {
-            this.view.observer.ignore(() => {
-                // Chrome Android will hide the virtual keyboard when tapping
-                // inside an uneditable node, and not bring it back when we
-                // move the cursor to its proper position. This tries to
-                // restore the keyboard by cycling focus.
-                if (browser.android && browser.chrome && this.dom.contains(domSel.focusNode) && inUneditable(domSel.focusNode, this.dom)) {
-                    this.dom.blur();
-                    this.dom.focus({ preventScroll: true });
-                }
-                let rawSel = getSelection(this.root);
-                if (main.empty) {
-                    // Work around https://bugzilla.mozilla.org/show_bug.cgi?id=1612076
-                    if (browser.gecko) {
-                        let nextTo = nextToUneditable(anchor.node, anchor.offset);
-                        if (nextTo && nextTo != (1 /* Before */ | 2 /* After */)) {
-                            let text = nearbyTextNode(anchor.node, anchor.offset, nextTo == 1 /* Before */ ? 1 : -1);
-                            if (text)
-                                anchor = new DOMPos(text, nextTo == 1 /* Before */ ? 0 : text.nodeValue.length);
-                        }
-                    }
-                    rawSel.collapse(anchor.node, anchor.offset);
-                    if (main.bidiLevel != null && domSel.cursorBidiLevel != null)
-                        domSel.cursorBidiLevel = main.bidiLevel;
-                }
-                else if (rawSel.extend) {
-                    // Selection.extend can be used to create an 'inverted' selection
-                    // (one where the focus is before the anchor), but not all
-                    // browsers support it yet.
-                    rawSel.collapse(anchor.node, anchor.offset);
-                    rawSel.extend(head.node, head.offset);
-                }
-                else {
-                    // Primitive (IE) way
-                    let range = document.createRange();
-                    if (main.anchor > main.head)
-                        [anchor, head] = [head, anchor];
-                    range.setEnd(head.node, head.offset);
-                    range.setStart(anchor.node, anchor.offset);
-                    rawSel.removeAllRanges();
-                    rawSel.addRange(range);
-                }
-            });
-            this.view.observer.setSelectionRange(anchor, head);
-        }
-        this.impreciseAnchor = anchor.precise ? null : new DOMPos(domSel.anchorNode, domSel.anchorOffset);
-        this.impreciseHead = head.precise ? null : new DOMPos(domSel.focusNode, domSel.focusOffset);
-    }
-    enforceCursorAssoc() {
-        if (this.view.composing)
-            return;
-        let cursor = this.view.state.selection.main;
-        let sel = getSelection(this.root);
-        if (!cursor.empty || !cursor.assoc || !sel.modify)
-            return;
-        let line = LineView.find(this, cursor.head);
-        if (!line)
-            return;
-        let lineStart = line.posAtStart;
-        if (cursor.head == lineStart || cursor.head == lineStart + line.length)
-            return;
-        let before = this.coordsAt(cursor.head, -1), after = this.coordsAt(cursor.head, 1);
-        if (!before || !after || before.bottom > after.top)
-            return;
-        let dom = this.domAtPos(cursor.head + cursor.assoc);
-        sel.collapse(dom.node, dom.offset);
-        sel.modify("move", cursor.assoc < 0 ? "forward" : "backward", "lineboundary");
-    }
-    mayControlSelection() {
-        return this.view.state.facet(editable) ? this.root.activeElement == this.dom
-            : hasSelection(this.dom, this.view.observer.selectionRange);
-    }
-    nearest(dom) {
-        for (let cur = dom; cur;) {
-            let domView = ContentView.get(cur);
-            if (domView && domView.rootView == this)
-                return domView;
-            cur = cur.parentNode;
-        }
-        return null;
-    }
-    posFromDOM(node, offset) {
-        let view = this.nearest(node);
-        if (!view)
-            throw new RangeError("Trying to find position for a DOM position outside of the document");
-        return view.localPosFromDOM(node, offset) + view.posAtStart;
-    }
-    domAtPos(pos) {
-        let { i, off } = this.childCursor().findPos(pos, -1);
-        for (; i < this.children.length - 1;) {
-            let child = this.children[i];
-            if (off < child.length || child instanceof LineView)
-                break;
-            i++;
-            off = 0;
-        }
-        return this.children[i].domAtPos(off);
-    }
-    coordsAt(pos, side) {
-        for (let off = this.length, i = this.children.length - 1;; i--) {
-            let child = this.children[i], start = off - child.breakAfter - child.length;
-            if (pos > start ||
-                (pos == start && child.type != BlockType.WidgetBefore && child.type != BlockType.WidgetAfter &&
-                    (!i || side == 2 || this.children[i - 1].breakAfter ||
-                        (this.children[i - 1].type == BlockType.WidgetBefore && side > -2))))
-                return child.coordsAt(pos - start, side);
-            off = start;
-        }
-    }
-    measureVisibleLineHeights() {
-        let result = [], { from, to } = this.view.viewState.viewport;
-        let minWidth = Math.max(this.view.scrollDOM.clientWidth, this.minWidth) + 1;
-        for (let pos = 0, i = 0; i < this.children.length; i++) {
-            let child = this.children[i], end = pos + child.length;
-            if (end > to)
-                break;
-            if (pos >= from) {
-                result.push(child.dom.getBoundingClientRect().height);
-                let width = child.dom.scrollWidth;
-                if (width > minWidth) {
-                    this.minWidth = minWidth = width;
-                    this.minWidthFrom = pos;
-                    this.minWidthTo = end;
-                }
-            }
-            pos = end + child.breakAfter;
-        }
-        return result;
-    }
-    measureTextSize() {
-        for (let child of this.children) {
-            if (child instanceof LineView) {
-                let measure = child.measureTextSize();
-                if (measure)
-                    return measure;
-            }
-        }
-        // If no workable line exists, force a layout of a measurable element
-        let dummy = document.createElement("div"), lineHeight, charWidth;
-        dummy.className = "cm-line";
-        dummy.textContent = "abc def ghi jkl mno pqr stu";
-        this.view.observer.ignore(() => {
-            this.dom.appendChild(dummy);
-            let rect = clientRectsFor(dummy.firstChild)[0];
-            lineHeight = dummy.getBoundingClientRect().height;
-            charWidth = rect ? rect.width / 27 : 7;
-            dummy.remove();
-        });
-        return { lineHeight, charWidth };
-    }
-    childCursor(pos = this.length) {
-        // Move back to start of last element when possible, so that
-        // `ChildCursor.findPos` doesn't have to deal with the edge case
-        // of being after the last element.
-        let i = this.children.length;
-        if (i)
-            pos -= this.children[--i].length;
-        return new ChildCursor(this.children, pos, i);
-    }
-    computeBlockGapDeco() {
-        let deco = [], vs = this.view.viewState;
-        for (let pos = 0, i = 0;; i++) {
-            let next = i == vs.viewports.length ? null : vs.viewports[i];
-            let end = next ? next.from - 1 : this.length;
-            if (end > pos) {
-                let height = vs.lineBlockAt(end).bottom - vs.lineBlockAt(pos).top;
-                deco.push(Decoration.replace({ widget: new BlockGapWidget(height), block: true, inclusive: true }).range(pos, end));
-            }
-            if (!next)
-                break;
-            pos = next.to + 1;
-        }
-        return Decoration.set(deco);
-    }
-    updateDeco() {
-        return this.decorations = [
-            ...this.view.pluginField(PluginField.decorations),
-            ...this.view.state.facet(decorations),
-            this.compositionDeco,
-            this.computeBlockGapDeco(),
-            this.view.viewState.lineGapDeco
-        ];
-    }
-    scrollIntoView({ range, center }) {
-        let rect = this.coordsAt(range.head, range.empty ? range.assoc : range.head > range.anchor ? -1 : 1), other;
-        if (!rect)
-            return;
-        if (!range.empty && (other = this.coordsAt(range.anchor, range.anchor > range.head ? -1 : 1)))
-            rect = { left: Math.min(rect.left, other.left), top: Math.min(rect.top, other.top),
-                right: Math.max(rect.right, other.right), bottom: Math.max(rect.bottom, other.bottom) };
-        let mLeft = 0, mRight = 0, mTop = 0, mBottom = 0;
-        for (let margins of this.view.pluginField(PluginField.scrollMargins))
-            if (margins) {
-                let { left, right, top, bottom } = margins;
-                if (left != null)
-                    mLeft = Math.max(mLeft, left);
-                if (right != null)
-                    mRight = Math.max(mRight, right);
-                if (top != null)
-                    mTop = Math.max(mTop, top);
-                if (bottom != null)
-                    mBottom = Math.max(mBottom, bottom);
-            }
-        scrollRectIntoView(this.view.scrollDOM, {
-            left: rect.left - mLeft, top: rect.top - mTop,
-            right: rect.right + mRight, bottom: rect.bottom + mBottom
-        }, range.head < range.anchor ? -1 : 1, center);
-    }
-}
-function betweenUneditable(pos) {
-    return pos.node.nodeType == 1 && pos.node.firstChild &&
-        (pos.offset == 0 || pos.node.childNodes[pos.offset - 1].contentEditable == "false") &&
-        (pos.offset == pos.node.childNodes.length || pos.node.childNodes[pos.offset].contentEditable == "false");
-}
-class BlockGapWidget extends WidgetType {
-    constructor(height) {
-        super();
-        this.height = height;
-    }
-    toDOM() {
-        let elt = document.createElement("div");
-        this.updateDOM(elt);
-        return elt;
-    }
-    eq(other) { return other.height == this.height; }
-    updateDOM(elt) {
-        elt.style.height = this.height + "px";
-        return true;
-    }
-    get estimatedHeight() { return this.height; }
-}
-function computeCompositionDeco(view, changes) {
-    let sel = view.observer.selectionRange;
-    let textNode = sel.focusNode && nearbyTextNode(sel.focusNode, sel.focusOffset, 0);
-    if (!textNode)
-        return Decoration.none;
-    let cView = view.docView.nearest(textNode);
-    if (!cView)
-        return Decoration.none;
-    let from, to, topNode = textNode;
-    if (cView instanceof LineView) {
-        while (topNode.parentNode != cView.dom)
-            topNode = topNode.parentNode;
-        let prev = topNode.previousSibling;
-        while (prev && !ContentView.get(prev))
-            prev = prev.previousSibling;
-        from = to = prev ? ContentView.get(prev).posAtEnd : cView.posAtStart;
-    }
-    else {
-        for (;;) {
-            let { parent } = cView;
-            if (!parent)
-                return Decoration.none;
-            if (parent instanceof LineView)
-                break;
-            cView = parent;
-        }
-        from = cView.posAtStart;
-        to = from + cView.length;
-        topNode = cView.dom;
-    }
-    let newFrom = changes.mapPos(from, 1), newTo = Math.max(newFrom, changes.mapPos(to, -1));
-    let text = textNode.nodeValue, { state } = view;
-    if (newTo - newFrom < text.length) {
-        if (state.sliceDoc(newFrom, Math.min(state.doc.length, newFrom + text.length)) == text)
-            newTo = newFrom + text.length;
-        else if (state.sliceDoc(Math.max(0, newTo - text.length), newTo) == text)
-            newFrom = newTo - text.length;
-        else
-            return Decoration.none;
-    }
-    else if (state.sliceDoc(newFrom, newTo) != text) {
-        return Decoration.none;
-    }
-    return Decoration.set(Decoration.replace({ widget: new CompositionWidget(topNode, textNode) }).range(newFrom, newTo));
-}
-class CompositionWidget extends WidgetType {
-    constructor(top, text) {
-        super();
-        this.top = top;
-        this.text = text;
-    }
-    eq(other) { return this.top == other.top && this.text == other.text; }
-    toDOM() { return this.top; }
-    ignoreEvent() { return false; }
-    get customView() { return CompositionView; }
-}
-function nearbyTextNode(node, offset, side) {
-    for (;;) {
-        if (node.nodeType == 3)
-            return node;
-        if (node.nodeType == 1 && offset > 0 && side <= 0) {
-            node = node.childNodes[offset - 1];
-            offset = maxOffset(node);
-        }
-        else if (node.nodeType == 1 && offset < node.childNodes.length && side >= 0) {
-            node = node.childNodes[offset];
-            offset = 0;
-        }
-        else {
-            return null;
-        }
-    }
-}
-function nextToUneditable(node, offset) {
-    if (node.nodeType != 1)
-        return 0;
-    return (offset && node.childNodes[offset - 1].contentEditable == "false" ? 1 /* Before */ : 0) |
-        (offset < node.childNodes.length && node.childNodes[offset].contentEditable == "false" ? 2 /* After */ : 0);
-}
-class DecorationComparator$1 {
-    constructor() {
-        this.changes = [];
-    }
-    compareRange(from, to) { addRange(from, to, this.changes); }
-    comparePoint(from, to) { addRange(from, to, this.changes); }
-}
-function findChangedDeco(a, b, diff) {
-    let comp = new DecorationComparator$1;
-    RangeSet.compare(a, b, diff, comp);
-    return comp.changes;
-}
-function inUneditable(node, inside) {
-    for (let cur = node; cur && cur != inside; cur = cur.assignedSlot || cur.parentNode) {
-        if (cur.nodeType == 1 && cur.contentEditable == 'false') {
-            return true;
-        }
-    }
-    return false;
 }
 
 /**
@@ -8478,6 +8056,570 @@ function moveVisually(line, order, dir, start, forward) {
     return EditorSelection.cursor(nextIndex + line.from, forward ? -1 : 1, span.level);
 }
 
+class DOMReader {
+    constructor(points, view) {
+        this.points = points;
+        this.view = view;
+        this.text = "";
+        this.lineBreak = view.state.lineBreak;
+    }
+    readRange(start, end) {
+        if (!start)
+            return this;
+        let parent = start.parentNode;
+        for (let cur = start;;) {
+            this.findPointBefore(parent, cur);
+            this.readNode(cur);
+            let next = cur.nextSibling;
+            if (next == end)
+                break;
+            let view = ContentView.get(cur), nextView = ContentView.get(next);
+            if (view && nextView ? view.breakAfter :
+                (view ? view.breakAfter : isBlockElement(cur)) ||
+                    (isBlockElement(next) && (cur.nodeName != "BR" || cur.cmIgnore)))
+                this.text += this.lineBreak;
+            cur = next;
+        }
+        this.findPointBefore(parent, end);
+        return this;
+    }
+    readNode(node) {
+        if (node.cmIgnore)
+            return;
+        let view = ContentView.get(node);
+        let fromView = view && view.overrideDOMText;
+        let text;
+        if (fromView != null)
+            text = fromView.sliceString(0, undefined, this.lineBreak);
+        else if (node.nodeType == 3)
+            text = node.nodeValue;
+        else if (node.nodeName == "BR")
+            text = node.nextSibling ? this.lineBreak : "";
+        else if (node.nodeType == 1)
+            this.readRange(node.firstChild, null);
+        if (text != null) {
+            this.findPointIn(node, text.length);
+            this.text += text;
+            // Chrome inserts two newlines when pressing shift-enter at the
+            // end of a line. This drops one of those.
+            if (browser.chrome && this.view.inputState.lastKeyCode == 13 && !node.nextSibling && /\n\n$/.test(this.text))
+                this.text = this.text.slice(0, -1);
+        }
+    }
+    findPointBefore(node, next) {
+        for (let point of this.points)
+            if (point.node == node && node.childNodes[point.offset] == next)
+                point.pos = this.text.length;
+    }
+    findPointIn(node, maxLen) {
+        for (let point of this.points)
+            if (point.node == node)
+                point.pos = this.text.length + Math.min(point.offset, maxLen);
+    }
+}
+function isBlockElement(node) {
+    return node.nodeType == 1 && /^(DIV|P|LI|UL|OL|BLOCKQUOTE|DD|DT|H\d|SECTION|PRE)$/.test(node.nodeName);
+}
+class DOMPoint {
+    constructor(node, offset) {
+        this.node = node;
+        this.offset = offset;
+        this.pos = -1;
+    }
+}
+
+class DocView extends ContentView {
+    constructor(view) {
+        super();
+        this.view = view;
+        this.compositionDeco = Decoration.none;
+        this.decorations = [];
+        this.pluginDecorationLength = 0;
+        // Track a minimum width for the editor. When measuring sizes in
+        // measureVisibleLineHeights, this is updated to point at the width
+        // of a given element and its extent in the document. When a change
+        // happens in that range, these are reset. That way, once we've seen
+        // a line/element of a given length, we keep the editor wide enough
+        // to fit at least that element, until it is changed, at which point
+        // we forget it again.
+        this.minWidth = 0;
+        this.minWidthFrom = 0;
+        this.minWidthTo = 0;
+        // Track whether the DOM selection was set in a lossy way, so that
+        // we don't mess it up when reading it back it
+        this.impreciseAnchor = null;
+        this.impreciseHead = null;
+        this.forceSelection = false;
+        // Used by the resize observer to ignore resizes that we caused
+        // ourselves
+        this.lastUpdate = Date.now();
+        this.setDOM(view.contentDOM);
+        this.children = [new LineView];
+        this.children[0].setParent(this);
+        this.updateDeco();
+        this.updateInner([new ChangedRange(0, 0, 0, view.state.doc.length)], 0);
+    }
+    get root() { return this.view.root; }
+    get editorView() { return this.view; }
+    get length() { return this.view.state.doc.length; }
+    // Update the document view to a given state. scrollIntoView can be
+    // used as a hint to compute a new viewport that includes that
+    // position, if we know the editor is going to scroll that position
+    // into view.
+    update(update) {
+        let changedRanges = update.changedRanges;
+        if (this.minWidth > 0 && changedRanges.length) {
+            if (!changedRanges.every(({ fromA, toA }) => toA < this.minWidthFrom || fromA > this.minWidthTo)) {
+                this.minWidth = this.minWidthFrom = this.minWidthTo = 0;
+            }
+            else {
+                this.minWidthFrom = update.changes.mapPos(this.minWidthFrom, 1);
+                this.minWidthTo = update.changes.mapPos(this.minWidthTo, 1);
+            }
+        }
+        if (this.view.inputState.composing < 0)
+            this.compositionDeco = Decoration.none;
+        else if (update.transactions.length || this.dirty)
+            this.compositionDeco = computeCompositionDeco(this.view, update.changes);
+        // When the DOM nodes around the selection are moved to another
+        // parent, Chrome sometimes reports a different selection through
+        // getSelection than the one that it actually shows to the user.
+        // This forces a selection update when lines are joined to work
+        // around that. Issue #54
+        if ((browser.ie || browser.chrome) && !this.compositionDeco.size && update &&
+            update.state.doc.lines != update.startState.doc.lines)
+            this.forceSelection = true;
+        let prevDeco = this.decorations, deco = this.updateDeco();
+        let decoDiff = findChangedDeco(prevDeco, deco, update.changes);
+        changedRanges = ChangedRange.extendWithRanges(changedRanges, decoDiff);
+        if (this.dirty == 0 /* Not */ && changedRanges.length == 0) {
+            return false;
+        }
+        else {
+            this.updateInner(changedRanges, update.startState.doc.length);
+            if (update.transactions.length)
+                this.lastUpdate = Date.now();
+            return true;
+        }
+    }
+    // Used by update and the constructor do perform the actual DOM
+    // update
+    updateInner(changes, oldLength) {
+        this.view.viewState.mustMeasureContent = true;
+        this.updateChildren(changes, oldLength);
+        let { observer } = this.view;
+        observer.ignore(() => {
+            // Lock the height during redrawing, since Chrome sometimes
+            // messes with the scroll position during DOM mutation (though
+            // no relayout is triggered and I cannot imagine how it can
+            // recompute the scroll position without a layout)
+            this.dom.style.height = this.view.viewState.contentHeight + "px";
+            this.dom.style.minWidth = this.minWidth ? this.minWidth + "px" : "";
+            // Chrome will sometimes, when DOM mutations occur directly
+            // around the selection, get confused and report a different
+            // selection from the one it displays (issue #218). This tries
+            // to detect that situation.
+            let track = browser.chrome || browser.ios ? { node: observer.selectionRange.focusNode, written: false } : undefined;
+            this.sync(track);
+            this.dirty = 0 /* Not */;
+            if (track && (track.written || observer.selectionRange.focusNode != track.node))
+                this.forceSelection = true;
+            this.dom.style.height = "";
+        });
+        let gaps = [];
+        if (this.view.viewport.from || this.view.viewport.to < this.view.state.doc.length)
+            for (let child of this.children)
+                if (child instanceof BlockWidgetView && child.widget instanceof BlockGapWidget)
+                    gaps.push(child.dom);
+        observer.updateGaps(gaps);
+    }
+    updateChildren(changes, oldLength) {
+        let cursor = this.childCursor(oldLength);
+        for (let i = changes.length - 1;; i--) {
+            let next = i >= 0 ? changes[i] : null;
+            if (!next)
+                break;
+            let { fromA, toA, fromB, toB } = next;
+            let { content, breakAtStart, openStart, openEnd } = ContentBuilder.build(this.view.state.doc, fromB, toB, this.decorations, this.pluginDecorationLength);
+            let { i: toI, off: toOff } = cursor.findPos(toA, 1);
+            let { i: fromI, off: fromOff } = cursor.findPos(fromA, -1);
+            replaceRange(this, fromI, fromOff, toI, toOff, content, breakAtStart, openStart, openEnd);
+        }
+    }
+    // Sync the DOM selection to this.state.selection
+    updateSelection(mustRead = false, fromPointer = false) {
+        if (mustRead)
+            this.view.observer.readSelectionRange();
+        if (!(fromPointer || this.mayControlSelection()) ||
+            browser.ios && this.view.inputState.rapidCompositionStart)
+            return;
+        let force = this.forceSelection;
+        this.forceSelection = false;
+        let main = this.view.state.selection.main;
+        // FIXME need to handle the case where the selection falls inside a block range
+        let anchor = this.domAtPos(main.anchor);
+        let head = main.empty ? anchor : this.domAtPos(main.head);
+        // Always reset on Firefox when next to an uneditable node to
+        // avoid invisible cursor bugs (#111)
+        if (browser.gecko && main.empty && betweenUneditable(anchor)) {
+            let dummy = document.createTextNode("");
+            this.view.observer.ignore(() => anchor.node.insertBefore(dummy, anchor.node.childNodes[anchor.offset] || null));
+            anchor = head = new DOMPos(dummy, 0);
+            force = true;
+        }
+        let domSel = this.view.observer.selectionRange;
+        // If the selection is already here, or in an equivalent position, don't touch it
+        if (force || !domSel.focusNode ||
+            !isEquivalentPosition(anchor.node, anchor.offset, domSel.anchorNode, domSel.anchorOffset) ||
+            !isEquivalentPosition(head.node, head.offset, domSel.focusNode, domSel.focusOffset)) {
+            this.view.observer.ignore(() => {
+                // Chrome Android will hide the virtual keyboard when tapping
+                // inside an uneditable node, and not bring it back when we
+                // move the cursor to its proper position. This tries to
+                // restore the keyboard by cycling focus.
+                if (browser.android && browser.chrome && this.dom.contains(domSel.focusNode) &&
+                    inUneditable(domSel.focusNode, this.dom)) {
+                    this.dom.blur();
+                    this.dom.focus({ preventScroll: true });
+                }
+                let rawSel = getSelection(this.root);
+                if (main.empty) {
+                    // Work around https://bugzilla.mozilla.org/show_bug.cgi?id=1612076
+                    if (browser.gecko) {
+                        let nextTo = nextToUneditable(anchor.node, anchor.offset);
+                        if (nextTo && nextTo != (1 /* Before */ | 2 /* After */)) {
+                            let text = nearbyTextNode(anchor.node, anchor.offset, nextTo == 1 /* Before */ ? 1 : -1);
+                            if (text)
+                                anchor = new DOMPos(text, nextTo == 1 /* Before */ ? 0 : text.nodeValue.length);
+                        }
+                    }
+                    rawSel.collapse(anchor.node, anchor.offset);
+                    if (main.bidiLevel != null && domSel.cursorBidiLevel != null)
+                        domSel.cursorBidiLevel = main.bidiLevel;
+                }
+                else if (rawSel.extend) {
+                    // Selection.extend can be used to create an 'inverted' selection
+                    // (one where the focus is before the anchor), but not all
+                    // browsers support it yet.
+                    rawSel.collapse(anchor.node, anchor.offset);
+                    rawSel.extend(head.node, head.offset);
+                }
+                else {
+                    // Primitive (IE) way
+                    let range = document.createRange();
+                    if (main.anchor > main.head)
+                        [anchor, head] = [head, anchor];
+                    range.setEnd(head.node, head.offset);
+                    range.setStart(anchor.node, anchor.offset);
+                    rawSel.removeAllRanges();
+                    rawSel.addRange(range);
+                }
+            });
+            this.view.observer.setSelectionRange(anchor, head);
+        }
+        this.impreciseAnchor = anchor.precise ? null : new DOMPos(domSel.anchorNode, domSel.anchorOffset);
+        this.impreciseHead = head.precise ? null : new DOMPos(domSel.focusNode, domSel.focusOffset);
+    }
+    enforceCursorAssoc() {
+        if (this.compositionDeco.size)
+            return;
+        let cursor = this.view.state.selection.main;
+        let sel = getSelection(this.root);
+        if (!cursor.empty || !cursor.assoc || !sel.modify)
+            return;
+        let line = LineView.find(this, cursor.head);
+        if (!line)
+            return;
+        let lineStart = line.posAtStart;
+        if (cursor.head == lineStart || cursor.head == lineStart + line.length)
+            return;
+        let before = this.coordsAt(cursor.head, -1), after = this.coordsAt(cursor.head, 1);
+        if (!before || !after || before.bottom > after.top)
+            return;
+        let dom = this.domAtPos(cursor.head + cursor.assoc);
+        sel.collapse(dom.node, dom.offset);
+        sel.modify("move", cursor.assoc < 0 ? "forward" : "backward", "lineboundary");
+    }
+    mayControlSelection() {
+        return this.view.state.facet(editable) ? this.root.activeElement == this.dom
+            : hasSelection(this.dom, this.view.observer.selectionRange);
+    }
+    nearest(dom) {
+        for (let cur = dom; cur;) {
+            let domView = ContentView.get(cur);
+            if (domView && domView.rootView == this)
+                return domView;
+            cur = cur.parentNode;
+        }
+        return null;
+    }
+    posFromDOM(node, offset) {
+        let view = this.nearest(node);
+        if (!view)
+            throw new RangeError("Trying to find position for a DOM position outside of the document");
+        return view.localPosFromDOM(node, offset) + view.posAtStart;
+    }
+    domAtPos(pos) {
+        let { i, off } = this.childCursor().findPos(pos, -1);
+        for (; i < this.children.length - 1;) {
+            let child = this.children[i];
+            if (off < child.length || child instanceof LineView)
+                break;
+            i++;
+            off = 0;
+        }
+        return this.children[i].domAtPos(off);
+    }
+    coordsAt(pos, side) {
+        for (let off = this.length, i = this.children.length - 1;; i--) {
+            let child = this.children[i], start = off - child.breakAfter - child.length;
+            if (pos > start ||
+                (pos == start && child.type != BlockType.WidgetBefore && child.type != BlockType.WidgetAfter &&
+                    (!i || side == 2 || this.children[i - 1].breakAfter ||
+                        (this.children[i - 1].type == BlockType.WidgetBefore && side > -2))))
+                return child.coordsAt(pos - start, side);
+            off = start;
+        }
+    }
+    measureVisibleLineHeights() {
+        let result = [], { from, to } = this.view.viewState.viewport;
+        let contentWidth = this.view.contentDOM.clientWidth;
+        let isWider = contentWidth > Math.max(this.view.scrollDOM.clientWidth, this.minWidth) + 1;
+        let widest = -1;
+        for (let pos = 0, i = 0; i < this.children.length; i++) {
+            let child = this.children[i], end = pos + child.length;
+            if (end > to)
+                break;
+            if (pos >= from) {
+                let childRect = child.dom.getBoundingClientRect();
+                result.push(childRect.height);
+                if (isWider) {
+                    let last = child.dom.lastChild;
+                    let rects = last ? clientRectsFor(last) : [];
+                    if (rects.length) {
+                        let rect = rects[rects.length - 1];
+                        let width = this.view.textDirection == Direction.LTR ? rect.right - childRect.left
+                            : childRect.right - rect.left;
+                        if (width > widest) {
+                            widest = width;
+                            this.minWidth = contentWidth;
+                            this.minWidthFrom = pos;
+                            this.minWidthTo = end;
+                        }
+                    }
+                }
+            }
+            pos = end + child.breakAfter;
+        }
+        return result;
+    }
+    measureTextSize() {
+        for (let child of this.children) {
+            if (child instanceof LineView) {
+                let measure = child.measureTextSize();
+                if (measure)
+                    return measure;
+            }
+        }
+        // If no workable line exists, force a layout of a measurable element
+        let dummy = document.createElement("div"), lineHeight, charWidth;
+        dummy.className = "cm-line";
+        dummy.textContent = "abc def ghi jkl mno pqr stu";
+        this.view.observer.ignore(() => {
+            this.dom.appendChild(dummy);
+            let rect = clientRectsFor(dummy.firstChild)[0];
+            lineHeight = dummy.getBoundingClientRect().height;
+            charWidth = rect ? rect.width / 27 : 7;
+            dummy.remove();
+        });
+        return { lineHeight, charWidth };
+    }
+    childCursor(pos = this.length) {
+        // Move back to start of last element when possible, so that
+        // `ChildCursor.findPos` doesn't have to deal with the edge case
+        // of being after the last element.
+        let i = this.children.length;
+        if (i)
+            pos -= this.children[--i].length;
+        return new ChildCursor(this.children, pos, i);
+    }
+    computeBlockGapDeco() {
+        let deco = [], vs = this.view.viewState;
+        for (let pos = 0, i = 0;; i++) {
+            let next = i == vs.viewports.length ? null : vs.viewports[i];
+            let end = next ? next.from - 1 : this.length;
+            if (end > pos) {
+                let height = vs.lineBlockAt(end).bottom - vs.lineBlockAt(pos).top;
+                deco.push(Decoration.replace({ widget: new BlockGapWidget(height), block: true, inclusive: true }).range(pos, end));
+            }
+            if (!next)
+                break;
+            pos = next.to + 1;
+        }
+        return Decoration.set(deco);
+    }
+    updateDeco() {
+        let pluginDecorations = this.view.pluginField(PluginField.decorations);
+        this.pluginDecorationLength = pluginDecorations.length;
+        return this.decorations = [
+            ...pluginDecorations,
+            ...this.view.state.facet(decorations),
+            this.compositionDeco,
+            this.computeBlockGapDeco(),
+            this.view.viewState.lineGapDeco
+        ];
+    }
+    scrollIntoView(target) {
+        let { range } = target;
+        let rect = this.coordsAt(range.head, range.empty ? range.assoc : range.head > range.anchor ? -1 : 1), other;
+        if (!rect)
+            return;
+        if (!range.empty && (other = this.coordsAt(range.anchor, range.anchor > range.head ? -1 : 1)))
+            rect = { left: Math.min(rect.left, other.left), top: Math.min(rect.top, other.top),
+                right: Math.max(rect.right, other.right), bottom: Math.max(rect.bottom, other.bottom) };
+        let mLeft = 0, mRight = 0, mTop = 0, mBottom = 0;
+        for (let margins of this.view.pluginField(PluginField.scrollMargins))
+            if (margins) {
+                let { left, right, top, bottom } = margins;
+                if (left != null)
+                    mLeft = Math.max(mLeft, left);
+                if (right != null)
+                    mRight = Math.max(mRight, right);
+                if (top != null)
+                    mTop = Math.max(mTop, top);
+                if (bottom != null)
+                    mBottom = Math.max(mBottom, bottom);
+            }
+        let targetRect = {
+            left: rect.left - mLeft, top: rect.top - mTop,
+            right: rect.right + mRight, bottom: rect.bottom + mBottom
+        };
+        scrollRectIntoView(this.view.scrollDOM, targetRect, range.head < range.anchor ? -1 : 1, target.x, target.y, target.xMargin, target.yMargin, this.view.textDirection == Direction.LTR);
+    }
+}
+function betweenUneditable(pos) {
+    return pos.node.nodeType == 1 && pos.node.firstChild &&
+        (pos.offset == 0 || pos.node.childNodes[pos.offset - 1].contentEditable == "false") &&
+        (pos.offset == pos.node.childNodes.length || pos.node.childNodes[pos.offset].contentEditable == "false");
+}
+class BlockGapWidget extends WidgetType {
+    constructor(height) {
+        super();
+        this.height = height;
+    }
+    toDOM() {
+        let elt = document.createElement("div");
+        this.updateDOM(elt);
+        return elt;
+    }
+    eq(other) { return other.height == this.height; }
+    updateDOM(elt) {
+        elt.style.height = this.height + "px";
+        return true;
+    }
+    get estimatedHeight() { return this.height; }
+}
+function computeCompositionDeco(view, changes) {
+    let sel = view.observer.selectionRange;
+    let textNode = sel.focusNode && nearbyTextNode(sel.focusNode, sel.focusOffset, 0);
+    if (!textNode)
+        return Decoration.none;
+    let cView = view.docView.nearest(textNode);
+    if (!cView)
+        return Decoration.none;
+    let from, to, topNode = textNode;
+    if (cView instanceof LineView) {
+        while (topNode.parentNode != cView.dom)
+            topNode = topNode.parentNode;
+        let prev = topNode.previousSibling;
+        while (prev && !ContentView.get(prev))
+            prev = prev.previousSibling;
+        from = to = prev ? ContentView.get(prev).posAtEnd : cView.posAtStart;
+    }
+    else {
+        for (;;) {
+            let { parent } = cView;
+            if (!parent)
+                return Decoration.none;
+            if (parent instanceof LineView)
+                break;
+            cView = parent;
+        }
+        from = cView.posAtStart;
+        to = from + cView.length;
+        topNode = cView.dom;
+    }
+    let newFrom = changes.mapPos(from, 1), newTo = Math.max(newFrom, changes.mapPos(to, -1));
+    let { state } = view, text = topNode.nodeType == 3 ? topNode.nodeValue :
+        new DOMReader([], view).readRange(topNode.firstChild, null).text;
+    if (newTo - newFrom < text.length) {
+        if (state.sliceDoc(newFrom, Math.min(state.doc.length, newFrom + text.length)) == text)
+            newTo = newFrom + text.length;
+        else if (state.sliceDoc(Math.max(0, newTo - text.length), newTo) == text)
+            newFrom = newTo - text.length;
+        else
+            return Decoration.none;
+    }
+    else if (state.sliceDoc(newFrom, newTo) != text) {
+        return Decoration.none;
+    }
+    return Decoration.set(Decoration.replace({ widget: new CompositionWidget(topNode, textNode) }).range(newFrom, newTo));
+}
+class CompositionWidget extends WidgetType {
+    constructor(top, text) {
+        super();
+        this.top = top;
+        this.text = text;
+    }
+    eq(other) { return this.top == other.top && this.text == other.text; }
+    toDOM() { return this.top; }
+    ignoreEvent() { return false; }
+    get customView() { return CompositionView; }
+}
+function nearbyTextNode(node, offset, side) {
+    for (;;) {
+        if (node.nodeType == 3)
+            return node;
+        if (node.nodeType == 1 && offset > 0 && side <= 0) {
+            node = node.childNodes[offset - 1];
+            offset = maxOffset(node);
+        }
+        else if (node.nodeType == 1 && offset < node.childNodes.length && side >= 0) {
+            node = node.childNodes[offset];
+            offset = 0;
+        }
+        else {
+            return null;
+        }
+    }
+}
+function nextToUneditable(node, offset) {
+    if (node.nodeType != 1)
+        return 0;
+    return (offset && node.childNodes[offset - 1].contentEditable == "false" ? 1 /* Before */ : 0) |
+        (offset < node.childNodes.length && node.childNodes[offset].contentEditable == "false" ? 2 /* After */ : 0);
+}
+class DecorationComparator$1 {
+    constructor() {
+        this.changes = [];
+    }
+    compareRange(from, to) { addRange(from, to, this.changes); }
+    comparePoint(from, to) { addRange(from, to, this.changes); }
+}
+function findChangedDeco(a, b, diff) {
+    let comp = new DecorationComparator$1;
+    RangeSet.compare(a, b, diff, comp);
+    return comp.changes;
+}
+function inUneditable(node, inside) {
+    for (let cur = node; cur && cur != inside; cur = cur.assignedSlot || cur.parentNode) {
+        if (cur.nodeType == 1 && cur.contentEditable == 'false') {
+            return true;
+        }
+    }
+    return false;
+}
+
 function groupAt(state, pos, bias = 1) {
     let categorize = state.charCategorizer(pos);
     let line = state.doc.lineAt(pos), linePos = pos - line.from;
@@ -8613,38 +8755,51 @@ function domPosInText(node, x, y) {
 function posAtCoords(view, { x, y }, precise, bias = -1) {
     var _a;
     let content = view.contentDOM.getBoundingClientRect(), docTop = content.top + view.viewState.paddingTop;
-    let halfLine = view.defaultLineHeight / 2;
-    let block, yOffset = y - docTop;
-    for (let bounced = false;;) {
+    let block, { docHeight } = view.viewState;
+    let yOffset = Math.max(0, Math.min(y - docTop, docHeight));
+    // Scan for a text block near the queried y position
+    for (let halfLine = view.defaultLineHeight / 2, bounced = false;;) {
         block = view.elementAtHeight(yOffset);
-        if (block.top > yOffset || block.bottom < yOffset) {
-            bias = block.top > yOffset ? -1 : 1;
-            yOffset = Math.min(block.bottom - halfLine, Math.max(block.top + halfLine, yOffset));
-            if (bounced)
-                return precise ? null : 0;
-            else
-                bounced = true;
-        }
         if (block.type == BlockType.Text)
             break;
-        yOffset = bias > 0 ? block.bottom + halfLine : block.top - halfLine;
+        for (;;) {
+            // Move the y position out of this block
+            yOffset = bias > 0 ? block.bottom + halfLine : block.top - halfLine;
+            if (yOffset >= 0 && yOffset <= docHeight)
+                break;
+            // If the document consists entirely of replaced widgets, we
+            // won't find a text block, so return 0
+            if (bounced)
+                return precise ? null : 0;
+            bounced = true;
+            bias = -bias;
+        }
     }
     y = docTop + yOffset;
     let lineStart = block.from;
-    // Clip x to the viewport sides
-    x = Math.max(content.left + 1, Math.min(Math.max(content.right, content.left + view.docView.minWidth) - 1, x));
     // If this is outside of the rendered viewport, we can't determine a position
     if (lineStart < view.viewport.from)
-        return view.viewport.from == 0 ? 0 : posAtCoordsImprecise(view, content, block, x, y);
+        return view.viewport.from == 0 ? 0 : precise ? null : posAtCoordsImprecise(view, content, block, x, y);
     if (lineStart > view.viewport.to)
-        return view.viewport.to == view.state.doc.length ? view.state.doc.length : posAtCoordsImprecise(view, content, block, x, y);
+        return view.viewport.to == view.state.doc.length ? view.state.doc.length :
+            precise ? null : posAtCoordsImprecise(view, content, block, x, y);
     // Prefer ShadowRootOrDocument.elementFromPoint if present, fall back to document if not
     let doc = view.dom.ownerDocument;
-    let element = (view.root.elementFromPoint ? view.root : doc).elementFromPoint(x, y);
+    let root = view.root.elementFromPoint ? view.root : doc;
+    let element = root.elementFromPoint(x, y);
+    if (element && !view.contentDOM.contains(element))
+        element = null;
+    // If the element is unexpected, clip x at the sides of the content area and try again
+    if (!element) {
+        x = Math.max(content.left + 1, Math.min(content.right - 1, x));
+        element = root.elementFromPoint(x, y);
+        if (element && !view.contentDOM.contains(element))
+            element = null;
+    }
     // There's visible editor content under the point, so we can try
     // using caret(Position|Range)FromPoint as a shortcut
     let node, offset = -1;
-    if (element && view.contentDOM.contains(element) && ((_a = view.docView.nearest(element)) === null || _a === void 0 ? void 0 : _a.isEditable) != false) {
+    if (element && ((_a = view.docView.nearest(element)) === null || _a === void 0 ? void 0 : _a.isEditable) != false) {
         if (doc.caretPositionFromPoint) {
             let pos = doc.caretPositionFromPoint(x, y);
             if (pos)
@@ -8662,6 +8817,8 @@ function posAtCoords(view, { x, y }, precise, bias = -1) {
     // No luck, do our own (potentially expensive) search
     if (!node || !view.docView.dom.contains(node)) {
         let line = LineView.find(view.docView, lineStart);
+        if (!line)
+            return yOffset > block.top + block.height / 2 ? block.to : block.from;
         ({ node, offset } = domPosAtCoords(line.dom, x, y));
     }
     return view.docView.posFromDOM(node, offset);
@@ -8785,14 +8942,6 @@ class InputState {
     constructor(view) {
         this.lastKeyCode = 0;
         this.lastKeyTime = 0;
-        // On Chrome Android, backspace near widgets is just completely
-        // broken, and there are no key events, so we need to handle the
-        // beforeinput event. Deleting stuff will often create a flurry of
-        // events, and interrupting it before it is done just makes
-        // subsequent events even more broken, so again, we hold off doing
-        // anything until the browser is finished with whatever it is trying
-        // to do.
-        this.pendingAndroidKey = undefined;
         // On iOS, some keys need to have their default behavior happen
         // (after which we retroactively handle them and reset the DOM) to
         // avoid messing up the virtual keyboard state.
@@ -8861,21 +9010,14 @@ class InputState {
     }
     runCustomHandlers(type, view, event) {
         for (let set of this.customHandlers) {
-            let handler = set.handlers[type], handled = false;
+            let handler = set.handlers[type];
             if (handler) {
                 try {
-                    handled = handler.call(set.plugin, event, view);
+                    if (handler.call(set.plugin, event, view) || event.defaultPrevented)
+                        return true;
                 }
                 catch (e) {
                     logException(view.state, e);
-                }
-                if (handled || event.defaultPrevented) {
-                    // Chrome for Android often applies a bunch of nonsensical
-                    // DOM changes after an enter press, even when
-                    // preventDefault-ed. This tries to ignore those.
-                    if (browser.android && type == "keydown" && event.keyCode == 13)
-                        view.observer.flushSoon();
-                    return true;
                 }
             }
         }
@@ -8900,6 +9042,16 @@ class InputState {
         this.lastKeyTime = Date.now();
         if (this.screenKeyEvent(view, event))
             return true;
+        // Chrome for Android usually doesn't fire proper key events, but
+        // occasionally does, usually surrounded by a bunch of complicated
+        // composition changes. When an enter or backspace key event is
+        // seen, hold off on handling DOM events for a bit, and then
+        // dispatch it.
+        if (browser.android && browser.chrome && !event.synthetic &&
+            (event.keyCode == 13 || event.keyCode == 8)) {
+            view.observer.delayAndroidKey(event.key, event.keyCode);
+            return true;
+        }
         // Prevent the default behavior of Enter on iOS makes the
         // virtual keyboard get stuck in the wrong (lowercase)
         // state. So we let it go through, and then, in
@@ -8920,24 +9072,6 @@ class InputState {
             return false;
         this.pendingIOSKey = undefined;
         return dispatchKey(view.contentDOM, key.key, key.keyCode);
-    }
-    // This causes the DOM observer to pause for a bit, and sets an
-    // animation frame (which seems the most reliable way to detect
-    // 'Chrome is done flailing about messing with the DOM') to fire a
-    // fake key event and re-sync the view again.
-    setPendingAndroidKey(view, pending) {
-        this.pendingAndroidKey = pending;
-        requestAnimationFrame(() => {
-            let key = this.pendingAndroidKey;
-            if (!key)
-                return;
-            this.pendingAndroidKey = undefined;
-            view.observer.processRecords();
-            let startState = view.state;
-            dispatchKey(view.contentDOM, key.key, key.keyCode);
-            if (view.state == startState)
-                view.docView.reset(true);
-        });
     }
     ignoreDuringComposition(event) {
         if (!/^key/.test(event.type))
@@ -8968,10 +9102,10 @@ class InputState {
         return (event.type == "keydown" && event.keyCode != 229) ||
             event.type == "compositionend" && !browser.ios;
     }
-    startMouseSelection(view, event, style) {
+    startMouseSelection(mouseSelection) {
         if (this.mouseSelection)
             this.mouseSelection.destroy();
-        this.mouseSelection = new MouseSelection(this, view, event, style);
+        this.mouseSelection = mouseSelection;
     }
     update(update) {
         if (this.mouseSelection)
@@ -8992,10 +9126,10 @@ const PendingKeys = [
 // Key codes for modifier keys
 const modifierCodes = [16, 17, 18, 20, 91, 92, 224, 225];
 class MouseSelection {
-    constructor(inputState, view, startEvent, style) {
-        this.inputState = inputState;
+    constructor(view, startEvent, style, mustSelect) {
         this.view = view;
         this.style = style;
+        this.mustSelect = mustSelect;
         this.lastEvent = startEvent;
         let doc = view.contentDOM.ownerDocument;
         doc.addEventListener("mousemove", this.move = this.move.bind(this));
@@ -9029,16 +9163,18 @@ class MouseSelection {
         let doc = this.view.contentDOM.ownerDocument;
         doc.removeEventListener("mousemove", this.move);
         doc.removeEventListener("mouseup", this.up);
-        this.inputState.mouseSelection = null;
+        this.view.inputState.mouseSelection = null;
     }
     select(event) {
         let selection = this.style.get(event, this.extend, this.multiple);
-        if (!selection.eq(this.view.state.selection) || selection.main.assoc != this.view.state.selection.main.assoc)
+        if (this.mustSelect || !selection.eq(this.view.state.selection) ||
+            selection.main.assoc != this.view.state.selection.main.assoc)
             this.view.dispatch({
                 selection,
                 userEvent: "select.pointer",
                 scrollIntoView: true
             });
+        this.mustSelect = false;
     }
     update(update) {
         if (update.docChanged && this.dragging)
@@ -9146,7 +9282,7 @@ handlers.touchmove = view => {
 };
 handlers.mousedown = (view, event) => {
     view.observer.flush();
-    if (lastTouch > Date.now() - 2000)
+    if (lastTouch > Date.now() - 2000 && getClickType(event) == 1)
         return; // Ignore touch interaction
     let style = null;
     for (let makeStyle of view.state.facet(mouseSelectionStyle)) {
@@ -9157,9 +9293,10 @@ handlers.mousedown = (view, event) => {
     if (!style && event.button == 0)
         style = basicMouseSelection(view, event);
     if (style) {
-        if (view.root.activeElement != view.contentDOM)
+        let mustFocus = view.root.activeElement != view.contentDOM;
+        if (mustFocus)
             view.observer.ignore(() => focusPreventScroll(view.contentDOM));
-        view.inputState.startMouseSelection(view, event, style);
+        view.inputState.startMouseSelection(new MouseSelection(view, event, style, mustFocus));
     }
 };
 function rangeForClick(view, pos, bias, type) {
@@ -9267,9 +9404,9 @@ handlers.dragstart = (view, event) => {
     }
 };
 function dropText(view, event, text, direct) {
-    let dropPos = view.posAtCoords({ x: event.clientX, y: event.clientY });
-    if (dropPos == null || !text)
+    if (!text)
         return;
+    let dropPos = view.posAtCoords({ x: event.clientX, y: event.clientY }, false);
     event.preventDefault();
     let { mouseSelection } = view.inputState;
     let del = direct && mouseSelection && mouseSelection.dragging && mouseSelection.dragMove ?
@@ -9414,12 +9551,12 @@ handlers.compositionstart = handlers.compositionupdate = view => {
     if (view.inputState.compositionFirstChange == null)
         view.inputState.compositionFirstChange = true;
     if (view.inputState.composing < 0) {
+        // FIXME possibly set a timeout to clear it again on Android
+        view.inputState.composing = 0;
         if (view.docView.compositionDeco.size) {
             view.observer.flush();
             forceClearComposition(view, true);
         }
-        // FIXME possibly set a timeout to clear it again on Android
-        view.inputState.composing = 0;
     }
 };
 handlers.compositionend = view => {
@@ -9445,7 +9582,7 @@ handlers.beforeinput = (view, event) => {
     // seems to do nothing at all on Chrome).
     let pending;
     if (browser.chrome && browser.android && (pending = PendingKeys.find(key => key.inputType == event.inputType))) {
-        view.inputState.setPendingAndroidKey(view, pending);
+        view.observer.delayAndroidKey(pending.key, pending.keyCode);
         if (pending.key == "Backspace" || pending.key == "Delete") {
             let startViewHeight = ((_a = window.visualViewport) === null || _a === void 0 ? void 0 : _a.height) || 0;
             setTimeout(() => {
@@ -9599,11 +9736,11 @@ class BlockInfo {
         return !offset ? this : new BlockInfo(this.from, this.length, this.top + offset, this.height, Array.isArray(this.type) ? this.type.map(b => b.moveY(offset)) : this.type);
     }
 }
-var QueryType = /*@__PURE__*/(function (QueryType) {
+var QueryType$1 = /*@__PURE__*/(function (QueryType) {
     QueryType[QueryType["ByPos"] = 0] = "ByPos";
     QueryType[QueryType["ByHeight"] = 1] = "ByHeight";
     QueryType[QueryType["ByPosNoHeight"] = 2] = "ByPosNoHeight";
-return QueryType})(QueryType || (QueryType = {}));
+return QueryType})(QueryType$1 || (QueryType$1 = {}));
 const Epsilon = 1e-3;
 class HeightMap {
     constructor(length, // The number of characters covered
@@ -9635,8 +9772,8 @@ class HeightMap {
         let me = this;
         for (let i = changes.length - 1; i >= 0; i--) {
             let { fromA, toA, fromB, toB } = changes[i];
-            let start = me.lineAt(fromA, QueryType.ByPosNoHeight, oldDoc, 0, 0);
-            let end = start.to >= toA ? start : me.lineAt(toA, QueryType.ByPosNoHeight, oldDoc, 0, 0);
+            let start = me.lineAt(fromA, QueryType$1.ByPosNoHeight, oldDoc, 0, 0);
+            let end = start.to >= toA ? start : me.lineAt(toA, QueryType$1.ByPosNoHeight, oldDoc, 0, 0);
             toB += end.to - toA;
             toA = end.to;
             while (i > 0 && start.from <= changes[i - 1].toA) {
@@ -9644,7 +9781,7 @@ class HeightMap {
                 fromB = changes[i - 1].fromB;
                 i--;
                 if (fromA < start.from)
-                    start = me.lineAt(fromA, QueryType.ByPosNoHeight, oldDoc, 0, 0);
+                    start = me.lineAt(fromA, QueryType$1.ByPosNoHeight, oldDoc, 0, 0);
             }
             fromB += start.from - fromA;
             fromA = start.from;
@@ -9779,9 +9916,9 @@ class HeightMapGap extends HeightMap {
         return new BlockInfo(from, length, top + lineHeight * line, lineHeight, BlockType.Text);
     }
     lineAt(value, type, doc, top, offset) {
-        if (type == QueryType.ByHeight)
+        if (type == QueryType$1.ByHeight)
             return this.blockAt(value, doc, top, offset);
-        if (type == QueryType.ByPosNoHeight) {
+        if (type == QueryType$1.ByPosNoHeight) {
             let { from, to } = doc.lineAt(value);
             return new BlockInfo(from, to - from, 0, 0, BlockType.Text);
         }
@@ -9874,17 +10011,17 @@ class HeightMapBranch extends HeightMap {
     get break() { return this.flags & 1 /* Break */; }
     blockAt(height, doc, top, offset) {
         let mid = top + this.left.height;
-        return height < mid || this.right.height == 0 ? this.left.blockAt(height, doc, top, offset)
+        return height < mid ? this.left.blockAt(height, doc, top, offset)
             : this.right.blockAt(height, doc, mid, offset + this.left.length + this.break);
     }
     lineAt(value, type, doc, top, offset) {
         let rightTop = top + this.left.height, rightOffset = offset + this.left.length + this.break;
-        let left = type == QueryType.ByHeight ? value < rightTop || this.right.height == 0 : value < rightOffset;
+        let left = type == QueryType$1.ByHeight ? value < rightTop : value < rightOffset;
         let base = left ? this.left.lineAt(value, type, doc, top, offset)
             : this.right.lineAt(value, type, doc, rightTop, rightOffset);
         if (this.break || (left ? base.to < rightOffset : base.from > rightOffset))
             return base;
-        let subQuery = type == QueryType.ByPosNoHeight ? QueryType.ByPosNoHeight : QueryType.ByPos;
+        let subQuery = type == QueryType$1.ByPosNoHeight ? QueryType$1.ByPosNoHeight : QueryType$1.ByPos;
         if (left)
             return base.join(this.right.lineAt(rightOffset, subQuery, doc, rightTop, rightOffset));
         else
@@ -9899,7 +10036,7 @@ class HeightMapBranch extends HeightMap {
                 this.right.forEachLine(from, to, doc, rightTop, rightOffset, f);
         }
         else {
-            let mid = this.lineAt(rightOffset, QueryType.ByPos, doc, top, offset);
+            let mid = this.lineAt(rightOffset, QueryType$1.ByPos, doc, top, offset);
             if (from < mid.from)
                 this.left.forEachLine(from, mid.from - 1, doc, top, offset, f);
             if (mid.to >= from && mid.from <= to)
@@ -10020,7 +10157,9 @@ class NodeBuilder {
     }
     point(from, to, deco) {
         if (from < to || deco.heightRelevant) {
-            let height = deco.widget ? Math.max(0, deco.widget.estimatedHeight) : 0;
+            let height = deco.widget ? deco.widget.estimatedHeight : 0;
+            if (height < 0)
+                height = this.oracle.lineHeight;
             let len = to - from;
             if (deco.block) {
                 this.addBlock(new HeightMapBlock(len, height, deco.type));
@@ -10148,8 +10287,8 @@ function visiblePixelRange(dom, paddingTop) {
             break;
         }
     }
-    return { left: left - rect.left, right: right - rect.left,
-        top: top - (rect.top + paddingTop), bottom: bottom - (rect.top + paddingTop) };
+    return { left: left - rect.left, right: Math.max(left, right) - rect.left,
+        top: top - (rect.top + paddingTop), bottom: Math.max(top, bottom) - (rect.top + paddingTop) };
 }
 // Line gaps are placeholder widgets used to hide pieces of overlong
 // lines within the viewport, as a kludge to keep the editor
@@ -10194,15 +10333,6 @@ class LineGapWidget extends WidgetType {
         return elt;
     }
     get estimatedHeight() { return this.vertical ? this.size : -1; }
-}
-class ScrollTarget {
-    constructor(range, center = false) {
-        this.range = range;
-        this.center = center;
-    }
-    map(changes) {
-        return changes.empty ? this : new ScrollTarget(this.range.map(changes), this.center);
-    }
 }
 class ViewState {
     constructor(state) {
@@ -10278,9 +10408,9 @@ class ViewState {
         let updateLines = !update.changes.empty || (update.flags & 2 /* Height */) ||
             viewport.from != this.viewport.from || viewport.to != this.viewport.to;
         this.viewport = viewport;
+        this.updateForViewport();
         if (updateLines)
             this.updateViewportLines();
-        this.updateForViewport();
         if (this.lineGaps.length || this.viewport.to - this.viewport.from > 4000 /* DoubleMargin */)
             this.updateLineGaps(this.ensureLineGaps(this.mapLineGaps(this.lineGaps, update.changes)));
         update.flags |= this.computeVisibleRanges();
@@ -10312,7 +10442,12 @@ class ViewState {
         let pixelViewport = this.printing ? { top: -1e8, bottom: 1e8, left: -1e8, right: 1e8 } : visiblePixelRange(dom, this.paddingTop);
         let dTop = pixelViewport.top - this.pixelViewport.top, dBottom = pixelViewport.bottom - this.pixelViewport.bottom;
         this.pixelViewport = pixelViewport;
-        this.inView = this.pixelViewport.bottom > this.pixelViewport.top && this.pixelViewport.right > this.pixelViewport.left;
+        let inView = this.pixelViewport.bottom > this.pixelViewport.top && this.pixelViewport.right > this.pixelViewport.left;
+        if (inView != this.inView) {
+            this.inView = inView;
+            if (inView)
+                measureContent = true;
+        }
         if (!this.inView)
             return 0;
         if (measureContent) {
@@ -10349,9 +10484,9 @@ class ViewState {
             this.scrollTarget && (this.scrollTarget.range.head < this.viewport.from || this.scrollTarget.range.head > this.viewport.to);
         if (viewportChange)
             this.viewport = this.getViewport(bias, this.scrollTarget);
+        this.updateForViewport();
         if ((result & 2 /* Height */) || viewportChange)
             this.updateViewportLines();
-        this.updateForViewport();
         if (this.lineGaps.length || this.viewport.to - this.viewport.from > 4000 /* DoubleMargin */)
             this.updateLineGaps(this.ensureLineGaps(refresh ? [] : this.lineGaps));
         result |= this.computeVisibleRanges();
@@ -10373,32 +10508,34 @@ class ViewState {
         // since the last update). It'll hold a number between 0 and 1
         let marginTop = 0.5 - Math.max(-0.5, Math.min(0.5, bias / 1000 /* Margin */ / 2));
         let map = this.heightMap, doc = this.state.doc, { visibleTop, visibleBottom } = this;
-        let viewport = new Viewport(map.lineAt(visibleTop - marginTop * 1000 /* Margin */, QueryType.ByHeight, doc, 0, 0).from, map.lineAt(visibleBottom + (1 - marginTop) * 1000 /* Margin */, QueryType.ByHeight, doc, 0, 0).to);
+        let viewport = new Viewport(map.lineAt(visibleTop - marginTop * 1000 /* Margin */, QueryType$1.ByHeight, doc, 0, 0).from, map.lineAt(visibleBottom + (1 - marginTop) * 1000 /* Margin */, QueryType$1.ByHeight, doc, 0, 0).to);
         // If scrollTarget is given, make sure the viewport includes that position
         if (scrollTarget) {
-            let { head } = scrollTarget.range, viewHeight = visibleBottom - visibleTop;
+            let { head } = scrollTarget.range, viewHeight = this.editorHeight;
             if (head < viewport.from || head > viewport.to) {
-                let block = map.lineAt(head, QueryType.ByPos, doc, 0, 0), topPos;
-                if (scrollTarget.center)
+                let block = map.lineAt(head, QueryType$1.ByPos, doc, 0, 0), topPos;
+                if (scrollTarget.y == "center")
                     topPos = (block.top + block.bottom) / 2 - viewHeight / 2;
-                else if (head < viewport.from)
+                else if (scrollTarget.y == "start" || scrollTarget.y == "nearest" && head < viewport.from)
                     topPos = block.top;
                 else
                     topPos = block.bottom - viewHeight;
-                viewport = new Viewport(map.lineAt(topPos - 1000 /* Margin */ / 2, QueryType.ByHeight, doc, 0, 0).from, map.lineAt(topPos + viewHeight + 1000 /* Margin */ / 2, QueryType.ByHeight, doc, 0, 0).to);
+                viewport = new Viewport(map.lineAt(topPos - 1000 /* Margin */ / 2, QueryType$1.ByHeight, doc, 0, 0).from, map.lineAt(topPos + viewHeight + 1000 /* Margin */ / 2, QueryType$1.ByHeight, doc, 0, 0).to);
             }
         }
         return viewport;
     }
     mapViewport(viewport, changes) {
         let from = changes.mapPos(viewport.from, -1), to = changes.mapPos(viewport.to, 1);
-        return new Viewport(this.heightMap.lineAt(from, QueryType.ByPos, this.state.doc, 0, 0).from, this.heightMap.lineAt(to, QueryType.ByPos, this.state.doc, 0, 0).to);
+        return new Viewport(this.heightMap.lineAt(from, QueryType$1.ByPos, this.state.doc, 0, 0).from, this.heightMap.lineAt(to, QueryType$1.ByPos, this.state.doc, 0, 0).to);
     }
     // Checks if a given viewport covers the visible part of the
     // document and not too much beyond that.
     viewportIsAppropriate({ from, to }, bias = 0) {
-        let { top } = this.heightMap.lineAt(from, QueryType.ByPos, this.state.doc, 0, 0);
-        let { bottom } = this.heightMap.lineAt(to, QueryType.ByPos, this.state.doc, 0, 0);
+        if (!this.inView)
+            return true;
+        let { top } = this.heightMap.lineAt(from, QueryType$1.ByPos, this.state.doc, 0, 0);
+        let { bottom } = this.heightMap.lineAt(to, QueryType$1.ByPos, this.state.doc, 0, 0);
         let { visibleTop, visibleBottom } = this;
         return (from == 0 || top <= visibleTop - Math.max(10 /* MinCoverMargin */, Math.min(-bias, 250 /* MaxCoverMargin */))) &&
             (to == this.state.doc.length ||
@@ -10495,16 +10632,19 @@ class ViewState {
     }
     lineBlockAt(pos) {
         return (pos >= this.viewport.from && pos <= this.viewport.to && this.viewportLines.find(b => b.from <= pos && b.to >= pos)) ||
-            scaleBlock(this.heightMap.lineAt(pos, QueryType.ByPos, this.state.doc, 0, 0), this.scaler);
+            scaleBlock(this.heightMap.lineAt(pos, QueryType$1.ByPos, this.state.doc, 0, 0), this.scaler);
     }
     lineBlockAtHeight(height) {
-        return scaleBlock(this.heightMap.lineAt(this.scaler.fromDOM(height), QueryType.ByHeight, this.state.doc, 0, 0), this.scaler);
+        return scaleBlock(this.heightMap.lineAt(this.scaler.fromDOM(height), QueryType$1.ByHeight, this.state.doc, 0, 0), this.scaler);
     }
     elementAtHeight(height) {
         return scaleBlock(this.heightMap.blockAt(this.scaler.fromDOM(height), this.state.doc, 0, 0), this.scaler);
     }
+    get docHeight() {
+        return this.scaler.toDOM(this.heightMap.height);
+    }
     get contentHeight() {
-        return this.scaler.toDOM(this.heightMap.height) + this.paddingTop + this.paddingBottom;
+        return this.docHeight + this.paddingTop + this.paddingBottom;
     }
 }
 class Viewport {
@@ -10589,8 +10729,8 @@ class BigScaler {
     constructor(doc, heightMap, viewports) {
         let vpHeight = 0, base = 0, domBase = 0;
         this.viewports = viewports.map(({ from, to }) => {
-            let top = heightMap.lineAt(from, QueryType.ByPos, doc, 0, 0).top;
-            let bottom = heightMap.lineAt(to, QueryType.ByPos, doc, 0, 0).bottom;
+            let top = heightMap.lineAt(from, QueryType$1.ByPos, doc, 0, 0).top;
+            let bottom = heightMap.lineAt(to, QueryType$1.ByPos, doc, 0, 0).bottom;
             vpHeight += bottom - top;
             return { from, to, top, bottom, domTop: 0, domBottom: 0 };
         });
@@ -10734,11 +10874,13 @@ const baseTheme$8 = /*@__PURE__*/buildTheme("." + baseThemeID, {
     // recomputation.
     "@keyframes cm-blink": { "0%": {}, "50%": { visibility: "hidden" }, "100%": {} },
     "@keyframes cm-blink2": { "0%": {}, "50%": { visibility: "hidden" }, "100%": {} },
-    ".cm-cursor": {
+    ".cm-cursor, .cm-dropCursor": {
         position: "absolute",
         borderLeft: "1.2px solid black",
         marginLeft: "-0.6px",
         pointerEvents: "none",
+    },
+    ".cm-cursor": {
         display: "none"
     },
     "&dark .cm-cursor": {
@@ -10758,7 +10900,8 @@ const baseTheme$8 = /*@__PURE__*/buildTheme("." + baseThemeID, {
     },
     ".cm-placeholder": {
         color: "#888",
-        display: "inline-block"
+        display: "inline-block",
+        verticalAlign: "top",
     },
     ".cm-button": {
         verticalAlign: "middle",
@@ -10825,6 +10968,7 @@ class DOMObserver {
         this.delayedFlush = -1;
         this.resizeTimeout = -1;
         this.queue = [];
+        this.delayedAndroidKey = null;
         this.scrollTargets = [];
         this.intersection = null;
         this.resize = null;
@@ -10878,7 +11022,7 @@ class DOMObserver {
             this.intersection = new IntersectionObserver(entries => {
                 if (this.parentCheck < 0)
                     this.parentCheck = setTimeout(this.listenForScroll.bind(this), 1000);
-                if (entries.length > 0 && entries[entries.length - 1].intersectionRatio > 0 != this.intersecting) {
+                if (entries.length > 0 && (entries[entries.length - 1].intersectionRatio > 0) != this.intersecting) {
                     this.intersecting = !this.intersecting;
                     if (this.intersecting != this.view.inView)
                         this.onScrollChanged(document.createEvent("Event"));
@@ -10908,7 +11052,7 @@ class DOMObserver {
         }
     }
     onSelectionChange(event) {
-        if (!this.readSelectionRange())
+        if (!this.readSelectionRange() || this.delayedAndroidKey)
             return;
         let { view } = this, sel = this.selectionRange;
         if (view.state.facet(editable) ? view.root.activeElement != this.dom : !hasSelection(view.dom, sel))
@@ -10919,8 +11063,10 @@ class DOMObserver {
         // Deletions on IE11 fire their events in the wrong order, giving
         // us a selection change event before the DOM changes are
         // reported.
-        // (Selection.isCollapsed isn't reliable on IE)
-        if (browser.ie && browser.ie_version <= 11 && !view.state.selection.main.empty &&
+        // Chrome Android has a similar issue when backspacing out a
+        // selection (#645).
+        if ((browser.ie && browser.ie_version <= 11 || browser.android && browser.chrome) && !view.state.selection.main.empty &&
+            // (Selection.isCollapsed isn't reliable on IE)
             sel.focusNode && isEquivalentPosition(sel.focusNode, sel.focusOffset, sel.anchorNode, sel.anchorOffset))
             this.flushSoon();
         else
@@ -11004,6 +11150,32 @@ class DOMObserver {
         this.queue.length = 0;
         this.selectionChanged = false;
     }
+    // Chrome Android, especially in combination with GBoard, not only
+    // doesn't reliably fire regular key events, but also often
+    // surrounds the effect of enter or backspace with a bunch of
+    // composition events that, when interrupted, cause text duplication
+    // or other kinds of corruption. This hack makes the editor back off
+    // from handling DOM changes for a moment when such a key is
+    // detected (via beforeinput or keydown), and then dispatches the
+    // key event, throwing away the DOM changes if it gets handled.
+    delayAndroidKey(key, keyCode) {
+        if (!this.delayedAndroidKey)
+            requestAnimationFrame(() => {
+                let key = this.delayedAndroidKey;
+                this.delayedAndroidKey = null;
+                let startState = this.view.state;
+                if (dispatchKey(this.view.contentDOM, key.key, key.keyCode))
+                    this.processRecords();
+                else
+                    this.flush();
+                if (this.view.state == startState)
+                    this.view.update([]);
+            });
+        // Since backspace beforeinput is sometimes signalled spuriously,
+        // Enter always takes precedence.
+        if (!this.delayedAndroidKey || key == "Enter")
+            this.delayedAndroidKey = { key, keyCode };
+    }
     flushSoon() {
         if (this.delayedFlush < 0)
             this.delayedFlush = window.setTimeout(() => { this.delayedFlush = -1; this.flush(); }, 20);
@@ -11040,13 +11212,13 @@ class DOMObserver {
     }
     // Apply pending changes, if any
     flush(readSelection = true) {
-        if (readSelection)
-            this.readSelectionRange();
         // Completely hold off flushing when pending keys are set—the code
         // managing those will make sure processRecords is called and the
         // view is resynchronized after
-        if (this.delayedFlush >= 0 || this.view.inputState.pendingAndroidKey)
+        if (this.delayedFlush >= 0 || this.delayedAndroidKey)
             return;
+        if (readSelection)
+            this.readSelectionRange();
         let { from, to, typeOver } = this.processRecords();
         let newSel = this.selectionChanged && hasSelection(this.dom, this.selectionRange);
         if (from < 0 && !newSel)
@@ -11056,7 +11228,7 @@ class DOMObserver {
         this.onChange(from, to, typeOver);
         // The view wasn't updated
         if (this.view.state == startState)
-            this.view.docView.reset(newSel);
+            this.view.update([]);
     }
     readMutation(rec) {
         let cView = this.view.docView.nearest(rec.target);
@@ -11187,11 +11359,22 @@ function applyDOMChange(view, start, end, typeOver) {
         };
     if (change) {
         let startState = view.state;
+        if (browser.ios && view.inputState.flushIOSKey(view))
+            return;
         // Android browsers don't fire reasonable key events for enter,
         // backspace, or delete. So this detects changes that look like
         // they're caused by those keys, and reinterprets them as key
-        // events.
-        if (browser.ios && view.inputState.flushIOSKey(view))
+        // events. (Some of these keys are also handled by beforeinput
+        // events and the pendingAndroidKey mechanism, but that's not
+        // reliable in all situations.)
+        if (browser.android &&
+            ((change.from == sel.from && change.to == sel.to &&
+                change.insert.length == 1 && change.insert.lines == 2 &&
+                dispatchKey(view.contentDOM, "Enter", 13)) ||
+                (change.from == sel.from - 1 && change.to == sel.to && change.insert.length == 0 &&
+                    dispatchKey(view.contentDOM, "Backspace", 8)) ||
+                (change.from == sel.from && change.to == sel.to + 1 && change.insert.length == 0 &&
+                    dispatchKey(view.contentDOM, "Delete", 46))))
             return;
         let text = change.insert.toString();
         if (view.state.facet(inputHandler).some(h => h(view, change.from, change.to, text)))
@@ -11263,76 +11446,6 @@ function findDiff(a, b, preferredPos, preferredSide) {
         toB = from;
     }
     return { from, toA, toB };
-}
-class DOMReader {
-    constructor(points, view) {
-        this.points = points;
-        this.view = view;
-        this.text = "";
-        this.lineBreak = view.state.lineBreak;
-    }
-    readRange(start, end) {
-        if (!start)
-            return;
-        let parent = start.parentNode;
-        for (let cur = start;;) {
-            this.findPointBefore(parent, cur);
-            this.readNode(cur);
-            let next = cur.nextSibling;
-            if (next == end)
-                break;
-            let view = ContentView.get(cur), nextView = ContentView.get(next);
-            if (view && nextView ? view.breakAfter :
-                (view ? view.breakAfter : isBlockElement(cur)) ||
-                    (isBlockElement(next) && (cur.nodeName != "BR" || cur.cmIgnore)))
-                this.text += this.lineBreak;
-            cur = next;
-        }
-        this.findPointBefore(parent, end);
-    }
-    readNode(node) {
-        if (node.cmIgnore)
-            return;
-        let view = ContentView.get(node);
-        let fromView = view && view.overrideDOMText;
-        let text;
-        if (fromView != null)
-            text = fromView.sliceString(0, undefined, this.lineBreak);
-        else if (node.nodeType == 3)
-            text = node.nodeValue;
-        else if (node.nodeName == "BR")
-            text = node.nextSibling ? this.lineBreak : "";
-        else if (node.nodeType == 1)
-            this.readRange(node.firstChild, null);
-        if (text != null) {
-            this.findPointIn(node, text.length);
-            this.text += text;
-            // Chrome inserts two newlines when pressing shift-enter at the
-            // end of a line. This drops one of those.
-            if (browser.chrome && this.view.inputState.lastKeyCode == 13 && !node.nextSibling && /\n\n$/.test(this.text))
-                this.text = this.text.slice(0, -1);
-        }
-    }
-    findPointBefore(node, next) {
-        for (let point of this.points)
-            if (point.node == node && node.childNodes[point.offset] == next)
-                point.pos = this.text.length;
-    }
-    findPointIn(node, maxLen) {
-        for (let point of this.points)
-            if (point.node == node)
-                point.pos = this.text.length + Math.min(point.offset, maxLen);
-    }
-}
-function isBlockElement(node) {
-    return node.nodeType == 1 && /^(DIV|P|LI|UL|OL|BLOCKQUOTE|DD|DT|H\d|SECTION|PRE)$/.test(node.nodeName);
-}
-class DOMPoint {
-    constructor(node, offset) {
-        this.node = node;
-        this.offset = offset;
-        this.pos = -1;
-    }
 }
 function selectionPoints(view) {
     let result = [];
@@ -11416,7 +11529,9 @@ class EditorView {
         this.dispatch = this.dispatch.bind(this);
         this.root = (config.root || getRoot(config.parent) || document);
         this.viewState = new ViewState(config.state || EditorState.create());
-        this.plugins = this.state.facet(viewPlugin).map(spec => new PluginInstance(spec).update(this));
+        this.plugins = this.state.facet(viewPlugin).map(spec => new PluginInstance(spec));
+        for (let plugin of this.plugins)
+            plugin.update(this);
         this.observer = new DOMObserver(this, (from, to, typeOver) => {
             applyDOMChange(this, from, to, typeOver);
         }, event => {
@@ -11509,7 +11624,9 @@ class EditorView {
                     if (e.is(scrollTo))
                         scrollTarget = new ScrollTarget(e.value);
                     else if (e.is(centerOn))
-                        scrollTarget = new ScrollTarget(e.value, true);
+                        scrollTarget = new ScrollTarget(e.value, "center");
+                    else if (e.is(scrollIntoView$1))
+                        scrollTarget = e.value;
                 }
             }
             this.viewState.update(update, scrollTarget);
@@ -11553,8 +11670,10 @@ class EditorView {
             for (let plugin of this.plugins)
                 plugin.destroy(this);
             this.viewState = new ViewState(newState);
-            this.plugins = newState.facet(viewPlugin).map(spec => new PluginInstance(spec).update(this));
+            this.plugins = newState.facet(viewPlugin).map(spec => new PluginInstance(spec));
             this.pluginMap.clear();
+            for (let plugin of this.plugins)
+                plugin.update(this);
             this.docView = new DocView(this);
             this.inputState.ensureHandlers(this);
             this.mountStyles();
@@ -11615,7 +11734,9 @@ class EditorView {
                 if (!changed && !this.measureRequests.length && this.viewState.scrollTarget == null)
                     break;
                 if (i > 5) {
-                    console.warn(this.measureRequests.length ? "Measure loop restarted more than 5 times" : "Viewport failed to stabilize");
+                    console.warn(this.measureRequests.length
+                        ? "Measure loop restarted more than 5 times"
+                        : "Viewport failed to stabilize");
                     break;
                 }
                 let measuring = [];
@@ -11661,7 +11782,8 @@ class EditorView {
                 }
                 if (redrawn)
                     this.docView.updateSelection(true);
-                if (this.viewport.from == oldViewport.from && this.viewport.to == oldViewport.to && this.measureRequests.length == 0)
+                if (this.viewport.from == oldViewport.from && this.viewport.to == oldViewport.to &&
+                    this.measureRequests.length == 0)
                     break;
             }
         }
@@ -11953,6 +12075,11 @@ class EditorView {
     Find the DOM parent node and offset (child offset if `node` is
     an element, character offset when it is a text node) at the
     given document position.
+    
+    Note that for positions that aren't currently in
+    `visibleRanges`, the resulting DOM position isn't necessarily
+    meaningful (it may just point before or after a placeholder
+    element).
     */
     domAtPos(pos) {
         return this.docView.domAtPos(pos);
@@ -12067,6 +12194,14 @@ class EditorView {
         this.destroyed = true;
     }
     /**
+    Returns an effect that can be
+    [added](https://codemirror.net/6/docs/ref/#state.TransactionSpec.effects) to a transaction to
+    cause it to scroll the given position or range into view.
+    */
+    static scrollIntoView(pos, options = {}) {
+        return scrollIntoView$1.of(new ScrollTarget(typeof pos == "number" ? EditorSelection.cursor(pos) : pos, options.y, options.x, options.yMargin, options.xMargin));
+    }
+    /**
     Facet that can be used to add DOM event handlers. The value
     should be an object mapping event names to handler functions. The
     first such function to return true will be assumed to have handled
@@ -12120,11 +12255,15 @@ class EditorView {
 /**
 Effect that can be [added](https://codemirror.net/6/docs/ref/#state.TransactionSpec.effects) to a
 transaction to make it scroll the given range into view.
+
+*Deprecated*. Use [`scrollIntoView`](https://codemirror.net/6/docs/ref/#view.EditorView^scrollIntoView) instead.
 */
 EditorView.scrollTo = scrollTo;
 /**
 Effect that makes the editor scroll the given range to the
 center of the visible view.
+
+*Deprecated*. Use [`scrollIntoView`](https://codemirror.net/6/docs/ref/#view.EditorView^scrollIntoView) instead.
 */
 EditorView.centerOn = centerOn;
 /**
@@ -12593,7 +12732,7 @@ function measureRange(view, range) {
     let ltr = view.textDirection == Direction.LTR;
     let content = view.contentDOM, contentRect = content.getBoundingClientRect(), base = getBase(view);
     let lineStyle = window.getComputedStyle(content.firstChild);
-    let leftSide = contentRect.left + parseInt(lineStyle.paddingLeft);
+    let leftSide = contentRect.left + parseInt(lineStyle.paddingLeft) + Math.min(0, parseInt(lineStyle.textIndent));
     let rightSide = contentRect.right - parseInt(lineStyle.paddingRight);
     let startBlock = blockAt(view, from), endBlock = blockAt(view, to);
     let visualStart = startBlock.type == BlockType.Text ? startBlock : null;
@@ -12613,7 +12752,7 @@ function measureRange(view, range) {
         let between = [];
         if ((visualStart || startBlock).to < (visualEnd || endBlock).from - 1)
             between.push(piece(leftSide, top.bottom, rightSide, bottom.top));
-        else if (top.bottom < bottom.top && blockAt(view, (top.bottom + bottom.top) / 2).type == BlockType.Text)
+        else if (top.bottom < bottom.top && view.elementAtHeight((top.bottom + bottom.top) / 2).type == BlockType.Text)
             top.bottom = bottom.top = (top.bottom + bottom.top) / 2;
         return pieces(top).concat(between).concat(pieces(bottom));
     }
@@ -12686,6 +12825,22 @@ function iterMatches(doc, re, from, to, f) {
                 f(pos + m.index, pos + m.index + m[0].length, m);
     }
 }
+function matchRanges(view, maxLength) {
+    let visible = view.visibleRanges;
+    if (visible.length == 1 && visible[0].from == view.viewport.from &&
+        visible[0].to == view.viewport.to)
+        return visible;
+    let result = [];
+    for (let { from, to } of visible) {
+        from = Math.max(view.state.doc.lineAt(from).from, from - maxLength);
+        to = Math.min(view.state.doc.lineAt(to).to, to + maxLength);
+        if (result.length && result[result.length - 1].to >= from)
+            result[result.length - 1].to = to;
+        else
+            result.push({ from, to });
+    }
+    return result;
+}
 /**
 Helper class used to make it easier to maintain decorations on
 visible code that matches a given regular expression. To be used
@@ -12697,12 +12852,13 @@ class MatchDecorator {
     Create a decorator.
     */
     constructor(config) {
-        let { regexp, decoration, boundary } = config;
+        let { regexp, decoration, boundary, maxLength = 1000 } = config;
         if (!regexp.global)
             throw new RangeError("The regular expression given to MatchDecorator should have its 'g' flag set");
         this.regexp = regexp;
         this.getDeco = typeof decoration == "function" ? decoration : () => decoration;
         this.boundary = boundary;
+        this.maxLength = maxLength;
     }
     /**
     Compute the full set of decorations for matches in the given
@@ -12711,7 +12867,7 @@ class MatchDecorator {
     */
     createDeco(view) {
         let build = new RangeSetBuilder();
-        for (let { from, to } of view.visibleRanges)
+        for (let { from, to } of matchRanges(view, this.maxLength))
             iterMatches(view.state.doc, this.regexp, from, to, (a, b, m) => build.add(a, b, this.getDeco(m, view, a)));
         return build.finish();
     }
@@ -15363,7 +15519,7 @@ class Parse$1 {
             this.finishChunk();
         if (this.parsedPos >= parseEnd)
             return this.finish();
-        if (context && this.parsedPos > context.viewport.to) {
+        if (context && this.parsedPos >= context.viewport.to) {
             context.skipUntilInView(this.parsedPos, parseEnd);
             return this.finish();
         }
@@ -15434,6 +15590,8 @@ class Parse$1 {
                 let token = readToken$1(streamParser.token, stream, this.state);
                 if (token)
                     offset = this.emitToken(tokenID(token), this.parsedPos + stream.start, this.parsedPos + stream.pos, 4, offset);
+                if (stream.start > 10000 /* MaxLineLength */)
+                    break;
             }
         }
         this.parsedPos = end;
@@ -20783,7 +20941,7 @@ Move the selection one page down.
 */
 const cursorPageDown = view => cursorByPage(view, true);
 function moveByLineBoundary(view, start, forward) {
-    let line = view.visualLineAt(start.head), moved = view.moveToLineBoundary(start, forward);
+    let line = view.lineBlockAt(start.head), moved = view.moveToLineBoundary(start, forward);
     if (moved.head == start.head && moved.head != (forward ? line.to : line.from))
         moved = view.moveToLineBoundary(start, forward, false);
     if (!forward && moved.head == line.from && line.length) {
@@ -20808,11 +20966,11 @@ const cursorLineBoundaryBackward = view => moveSel(view, range => moveByLineBoun
 /**
 Move the selection to the start of the line.
 */
-const cursorLineStart = view => moveSel(view, range => EditorSelection.cursor(view.visualLineAt(range.head).from, 1));
+const cursorLineStart = view => moveSel(view, range => EditorSelection.cursor(view.lineBlockAt(range.head).from, 1));
 /**
 Move the selection to the end of the line.
 */
-const cursorLineEnd = view => moveSel(view, range => EditorSelection.cursor(view.visualLineAt(range.head).to, -1));
+const cursorLineEnd = view => moveSel(view, range => EditorSelection.cursor(view.lineBlockAt(range.head).to, -1));
 function toMatchingBracket(state, dispatch, extend) {
     let found = false, selection = updateSel(state.selection, range => {
         let matching = matchBrackets(state, range.head, -1)
@@ -20910,11 +21068,11 @@ const selectLineBoundaryBackward = view => extendSel(view, range => moveByLineBo
 /**
 Move the selection head to the start of the line.
 */
-const selectLineStart = view => extendSel(view, range => EditorSelection.cursor(view.visualLineAt(range.head).from));
+const selectLineStart = view => extendSel(view, range => EditorSelection.cursor(view.lineBlockAt(range.head).from));
 /**
 Move the selection head to the end of the line.
 */
-const selectLineEnd = view => extendSel(view, range => EditorSelection.cursor(view.visualLineAt(range.head).to));
+const selectLineEnd = view => extendSel(view, range => EditorSelection.cursor(view.lineBlockAt(range.head).to));
 /**
 Move the selection to the start of the document.
 */
@@ -21087,7 +21245,7 @@ the end of the line. If the cursor is directly at the end of the
 line, delete the line break after it.
 */
 const deleteToLineEnd = view => deleteBy(view, pos => {
-    let lineEnd = view.visualLineAt(pos).to;
+    let lineEnd = view.lineBlockAt(pos).to;
     return skipAtomic(view, pos < lineEnd ? lineEnd : Math.min(view.state.doc.length, pos + 1), true);
 });
 /**
@@ -21096,7 +21254,7 @@ the start of the line. If the cursor is directly at the start of the
 line, delete the line break before it.
 */
 const deleteToLineStart = view => deleteBy(view, pos => {
-    let lineStart = view.visualLineAt(pos).from;
+    let lineStart = view.lineBlockAt(pos).from;
     return skipAtomic(view, pos > lineStart ? lineStart : Math.max(0, pos - 1), false);
 });
 /**
@@ -21451,7 +21609,7 @@ const standardKeymap = /*@__PURE__*/[
     { key: "Enter", run: insertNewlineAndIndent },
     { key: "Mod-a", run: selectAll },
     { key: "Backspace", run: deleteCharBackward, shift: deleteCharBackward },
-    { key: "Delete", run: deleteCharForward, shift: deleteCharForward },
+    { key: "Delete", run: deleteCharForward },
     { key: "Mod-Backspace", mac: "Alt-Backspace", run: deleteGroupBackward },
     { key: "Mod-Delete", mac: "Alt-Delete", run: deleteGroupForward },
     { mac: "Mod-Backspace", run: deleteToLineStart },
@@ -22166,6 +22324,9 @@ class PanelGroup {
         this.syncClasses();
     }
     sync(panels) {
+        for (let p of this.panels)
+            if (p.destroy && panels.indexOf(p) < 0)
+                p.destroy();
         this.panels = panels;
         this.syncDOM();
     }
@@ -22799,31 +22960,54 @@ const selectNextOccurrence = ({ state, dispatch }) => {
 
 const searchConfigFacet = /*@__PURE__*/Facet.define({
     combine(configs) {
-        let matchCase = configs.some(c => c.matchCase);
+        var _a;
         return {
-            top: configs.some(c => c.top),
-            matchCase: matchCase === undefined ? true : matchCase,
+            top: configs.reduce((val, conf) => val !== null && val !== void 0 ? val : conf.top, undefined) || false,
+            caseSensitive: configs.reduce((val, conf) => val !== null && val !== void 0 ? val : (conf.caseSensitive || conf.matchCase), undefined) || false,
+            createPanel: ((_a = configs.find(c => c.createPanel)) === null || _a === void 0 ? void 0 : _a.createPanel) || (view => new SearchPanel(view))
         };
     }
 });
-class Query {
-    constructor(search, replace, caseInsensitive) {
-        this.search = search;
-        this.replace = replace;
-        this.caseInsensitive = caseInsensitive;
+/**
+A search query. Part of the editor's search state.
+*/
+class SearchQuery {
+    /**
+    Create a query object.
+    */
+    constructor(config) {
+        this.search = config.search;
+        this.caseSensitive = !!config.caseSensitive;
+        this.regexp = !!config.regexp;
+        this.replace = config.replace || "";
+        this.valid = !!this.search && (!this.regexp || validRegExp(this.search));
     }
+    /**
+    Compare this query to another query.
+    */
     eq(other) {
         return this.search == other.search && this.replace == other.replace &&
-            this.caseInsensitive == other.caseInsensitive && this.constructor == other.constructor;
+            this.caseSensitive == other.caseSensitive && this.regexp == other.regexp;
+    }
+    /**
+    @internal
+    */
+    create() {
+        return this.regexp ? new RegExpQuery(this) : new StringQuery(this);
     }
 }
-class StringQuery extends Query {
-    constructor(search, replace, caseInsensitive) {
-        super(search, replace, caseInsensitive);
-        this.unquoted = search.replace(/\\([nrt\\])/g, (_, ch) => ch == "n" ? "\n" : ch == "r" ? "\r" : ch == "t" ? "\t" : "\\");
+class QueryType {
+    constructor(spec) {
+        this.spec = spec;
+    }
+}
+class StringQuery extends QueryType {
+    constructor(spec) {
+        super(spec);
+        this.unquoted = spec.search.replace(/\\([nrt\\])/g, (_, ch) => ch == "n" ? "\n" : ch == "r" ? "\r" : ch == "t" ? "\t" : "\\");
     }
     cursor(doc, from = 0, to = doc.length) {
-        return new SearchCursor(doc, this.unquoted, from, to, this.caseInsensitive ? x => x.toLowerCase() : undefined);
+        return new SearchCursor(doc, this.unquoted, from, to, this.spec.caseSensitive ? undefined : x => x.toLowerCase());
     }
     nextMatch(doc, curFrom, curTo) {
         let cursor = this.cursor(doc, curTo).nextOverlapping();
@@ -22850,7 +23034,7 @@ class StringQuery extends Query {
         return this.prevMatchInRange(doc, 0, curFrom) ||
             this.prevMatchInRange(doc, curTo, doc.length);
     }
-    getReplacement(_result) { return this.replace; }
+    getReplacement(_result) { return this.spec.replace; }
     matchAll(doc, limit) {
         let cursor = this.cursor(doc), ranges = [];
         while (!cursor.next().done) {
@@ -22865,15 +23049,10 @@ class StringQuery extends Query {
         while (!cursor.next().done)
             add(cursor.value.from, cursor.value.to);
     }
-    get valid() { return !!this.search; }
 }
-class RegExpQuery extends Query {
-    constructor(search, replace, caseInsensitive) {
-        super(search, replace, caseInsensitive);
-        this.valid = !!search && validRegExp(search);
-    }
+class RegExpQuery extends QueryType {
     cursor(doc, from = 0, to = doc.length) {
-        return new RegExpCursor(doc, this.search, this.caseInsensitive ? { ignoreCase: true } : undefined, from, to);
+        return new RegExpCursor(doc, this.spec.search, this.spec.caseSensitive ? undefined : { ignoreCase: true }, from, to);
     }
     nextMatch(doc, curFrom, curTo) {
         let cursor = this.cursor(doc, curTo).next();
@@ -22898,7 +23077,7 @@ class RegExpQuery extends Query {
             this.prevMatchInRange(doc, curTo, doc.length);
     }
     getReplacement(result) {
-        return this.replace.replace(/\$([$&\d+])/g, (m, i) => i == "$" ? "$"
+        return this.spec.replace.replace(/\$([$&\d+])/g, (m, i) => i == "$" ? "$"
             : i == "&" ? result.match[0]
                 : i != "0" && +i < result.match.length ? result.match[i]
                     : m);
@@ -22918,16 +23097,19 @@ class RegExpQuery extends Query {
             add(cursor.value.from, cursor.value.to);
     }
 }
-const setQuery = /*@__PURE__*/StateEffect.define();
+/**
+A state effect that updates the current search query.
+*/
+const setSearchQuery = /*@__PURE__*/StateEffect.define();
 const togglePanel = /*@__PURE__*/StateEffect.define();
 const searchState = /*@__PURE__*/StateField.define({
     create(state) {
-        return new SearchState(defaultQuery(state), createSearchPanel);
+        return new SearchState(defaultQuery(state).create(), createSearchPanel);
     },
     update(value, tr) {
         for (let effect of tr.effects) {
-            if (effect.is(setQuery))
-                value = new SearchState(effect.value, value.panel);
+            if (effect.is(setSearchQuery))
+                value = new SearchState(effect.value.create(), value.panel);
             else if (effect.is(togglePanel))
                 value = new SearchState(value.query, effect.value ? createSearchPanel : null);
         }
@@ -22953,7 +23135,7 @@ const searchHighlighter = /*@__PURE__*/ViewPlugin.fromClass(class {
             this.decorations = this.highlight(state);
     }
     highlight({ query, panel }) {
-        if (!panel || !query.valid)
+        if (!panel || !query.spec.valid)
             return Decoration.none;
         let { view } = this;
         let builder = new RangeSetBuilder();
@@ -22974,7 +23156,7 @@ const searchHighlighter = /*@__PURE__*/ViewPlugin.fromClass(class {
 function searchCommand(f) {
     return view => {
         let state = view.state.field(searchState, false);
-        return state && state.query.valid ? f(view, state) : openSearchPanel(view);
+        return state && state.query.spec.valid ? f(view, state) : openSearchPanel(view);
     };
 }
 /**
@@ -23097,31 +23279,14 @@ const replaceAll = /*@__PURE__*/searchCommand((view, { query }) => {
     return true;
 });
 function createSearchPanel(view) {
-    let { query } = view.state.field(searchState);
-    return {
-        dom: buildPanel({
-            view,
-            query,
-            updateQuery(q) {
-                if (!query.eq(q)) {
-                    query = q;
-                    view.dispatch({ effects: setQuery.of(query) });
-                }
-            }
-        }),
-        mount() {
-            this.dom.querySelector("[name=search]").select();
-        },
-        pos: 80,
-        top: view.state.facet(searchConfigFacet).top
-    };
+    return view.state.facet(searchConfigFacet).createPanel(view);
 }
 function defaultQuery(state, fallback) {
     var _a;
     let sel = state.selection.main;
     let selText = sel.empty || sel.to > sel.from + 100 ? "" : state.sliceDoc(sel.from, sel.to);
-    let caseInsensitive = (_a = fallback === null || fallback === void 0 ? void 0 : fallback.caseInsensitive) !== null && _a !== void 0 ? _a : !state.facet(searchConfigFacet).matchCase;
-    return fallback && !selText ? fallback : new StringQuery(selText.replace(/\n/g, "\\n"), "", caseInsensitive);
+    let caseSensitive = (_a = fallback === null || fallback === void 0 ? void 0 : fallback.caseSensitive) !== null && _a !== void 0 ? _a : state.facet(searchConfigFacet).caseSensitive;
+    return fallback && !selText ? fallback : new SearchQuery({ search: selText.replace(/\n/g, "\\n"), caseSensitive });
 }
 /**
 Make sure the search panel is open and focused.
@@ -23133,13 +23298,18 @@ const openSearchPanel = view => {
         if (!panel)
             return false;
         let searchInput = panel.dom.querySelector("[name=search]");
-        searchInput.focus();
-        searchInput.select();
+        if (searchInput != view.root.activeElement) {
+            let query = defaultQuery(view.state, state.query.spec);
+            if (query.valid)
+                view.dispatch({ effects: setSearchQuery.of(query) });
+            searchInput.focus();
+            searchInput.select();
+        }
     }
     else {
         view.dispatch({ effects: [
                 togglePanel.of(true),
-                state ? setQuery.of(defaultQuery(view.state, state.query)) : StateEffect.appendConfig.of(searchExtensions)
+                state ? setSearchQuery.of(defaultQuery(view.state, state.query.spec)) : StateEffect.appendConfig.of(searchExtensions)
             ] });
     }
     return true;
@@ -23175,74 +23345,111 @@ const searchKeymap = [
     { key: "Alt-g", run: gotoLine },
     { key: "Mod-d", run: selectNextOccurrence, preventDefault: true },
 ];
-function buildPanel(conf) {
-    function phrase(phrase) { return conf.view.state.phrase(phrase); }
-    let searchField = crelt("input", {
-        value: conf.query.search,
-        placeholder: phrase("Find"),
-        "aria-label": phrase("Find"),
-        class: "cm-textfield",
-        name: "search",
-        onchange: update,
-        onkeyup: update
-    });
-    let replaceField = crelt("input", {
-        value: conf.query.replace,
-        placeholder: phrase("Replace"),
-        "aria-label": phrase("Replace"),
-        class: "cm-textfield",
-        name: "replace",
-        onchange: update,
-        onkeyup: update
-    });
-    let caseField = crelt("input", {
-        type: "checkbox",
-        name: "case",
-        checked: !conf.query.caseInsensitive,
-        onchange: update
-    });
-    let reField = crelt("input", {
-        type: "checkbox",
-        name: "re",
-        checked: conf.query instanceof RegExpQuery,
-        onchange: update
-    });
-    function update() {
-        conf.updateQuery(new (reField.checked ? RegExpQuery : StringQuery)(searchField.value, replaceField.value, !caseField.checked));
+class SearchPanel {
+    constructor(view) {
+        this.view = view;
+        let query = this.query = view.state.field(searchState).query.spec;
+        this.commit = this.commit.bind(this);
+        this.searchField = crelt("input", {
+            value: query.search,
+            placeholder: phrase(view, "Find"),
+            "aria-label": phrase(view, "Find"),
+            class: "cm-textfield",
+            name: "search",
+            onchange: this.commit,
+            onkeyup: this.commit
+        });
+        this.replaceField = crelt("input", {
+            value: query.replace,
+            placeholder: phrase(view, "Replace"),
+            "aria-label": phrase(view, "Replace"),
+            class: "cm-textfield",
+            name: "replace",
+            onchange: this.commit,
+            onkeyup: this.commit
+        });
+        this.caseField = crelt("input", {
+            type: "checkbox",
+            name: "case",
+            checked: query.caseSensitive,
+            onchange: this.commit
+        });
+        this.reField = crelt("input", {
+            type: "checkbox",
+            name: "re",
+            checked: query.regexp,
+            onchange: this.commit
+        });
+        function button(name, onclick, content) {
+            return crelt("button", { class: "cm-button", name, onclick, type: "button" }, content);
+        }
+        this.dom = crelt("div", { onkeydown: (e) => this.keydown(e), class: "cm-search" }, [
+            this.searchField,
+            button("next", () => findNext(view), [phrase(view, "next")]),
+            button("prev", () => findPrevious(view), [phrase(view, "previous")]),
+            button("select", () => selectMatches(view), [phrase(view, "all")]),
+            crelt("label", null, [this.caseField, phrase(view, "match case")]),
+            crelt("label", null, [this.reField, phrase(view, "regexp")]),
+            ...view.state.readOnly ? [] : [
+                crelt("br"),
+                this.replaceField,
+                button("replace", () => replaceNext(view), [phrase(view, "replace")]),
+                button("replaceAll", () => replaceAll(view), [phrase(view, "replace all")]),
+                crelt("button", {
+                    name: "close",
+                    onclick: () => closeSearchPanel(view),
+                    "aria-label": phrase(view, "close"),
+                    type: "button"
+                }, ["×"])
+            ]
+        ]);
     }
-    function keydown(e) {
-        if (runScopeHandlers(conf.view, e, "search-panel")) {
+    commit() {
+        let query = new SearchQuery({
+            search: this.searchField.value,
+            caseSensitive: this.caseField.checked,
+            regexp: this.reField.checked,
+            replace: this.replaceField.value
+        });
+        if (!query.eq(this.query)) {
+            this.query = query;
+            this.view.dispatch({ effects: setSearchQuery.of(query) });
+        }
+    }
+    keydown(e) {
+        if (runScopeHandlers(this.view, e, "search-panel")) {
             e.preventDefault();
         }
-        else if (e.keyCode == 13 && e.target == searchField) {
+        else if (e.keyCode == 13 && e.target == this.searchField) {
             e.preventDefault();
-            (e.shiftKey ? findPrevious : findNext)(conf.view);
+            (e.shiftKey ? findPrevious : findNext)(this.view);
         }
-        else if (e.keyCode == 13 && e.target == replaceField) {
+        else if (e.keyCode == 13 && e.target == this.replaceField) {
             e.preventDefault();
-            replaceNext(conf.view);
+            replaceNext(this.view);
         }
     }
-    function button(name, onclick, content) {
-        return crelt("button", { class: "cm-button", name, onclick, type: "button" }, content);
+    update(update) {
+        for (let tr of update.transactions)
+            for (let effect of tr.effects) {
+                if (effect.is(setSearchQuery) && !effect.value.eq(this.query))
+                    this.setQuery(effect.value);
+            }
     }
-    let panel = crelt("div", { onkeydown: keydown, class: "cm-search" }, [
-        searchField,
-        button("next", () => findNext(conf.view), [phrase("next")]),
-        button("prev", () => findPrevious(conf.view), [phrase("previous")]),
-        button("select", () => selectMatches(conf.view), [phrase("all")]),
-        crelt("label", null, [caseField, phrase("match case")]),
-        crelt("label", null, [reField, phrase("regexp")]),
-        ...conf.view.state.readOnly ? [] : [
-            crelt("br"),
-            replaceField,
-            button("replace", () => replaceNext(conf.view), [phrase("replace")]),
-            button("replaceAll", () => replaceAll(conf.view), [phrase("replace all")]),
-            crelt("button", { name: "close", onclick: () => closeSearchPanel(conf.view), "aria-label": phrase("close"), type: "button" }, ["×"])
-        ]
-    ]);
-    return panel;
+    setQuery(query) {
+        this.query = query;
+        this.searchField.value = query.search;
+        this.replaceField.value = query.replace;
+        this.caseField.checked = query.caseSensitive;
+        this.reField.checked = query.regexp;
+    }
+    mount() {
+        this.searchField.select();
+    }
+    get pos() { return 80; }
+    get top() { return this.view.state.facet(searchConfigFacet).top; }
 }
+function phrase(view, phrase) { return view.state.phrase(phrase); }
 const AnnounceMargin = 30;
 const Break = /[\s\.,:;?!]/;
 function announceMatch(view, { from, to }) {
@@ -25929,16 +26136,16 @@ function css() {
 }
 
 // This file was generated by lezer-generator. You probably shouldn't edit it.
-const noSemi = 274,
+const noSemi = 275,
   incdec = 1,
   incdecPrefix = 2,
-  templateContent = 275,
-  templateDollarBrace = 276,
-  templateEnd = 277,
-  insertSemi = 278,
+  templateContent = 276,
+  templateDollarBrace = 277,
+  templateEnd = 278,
+  insertSemi = 279,
   TSExtends = 3,
-  spaces = 280,
-  newline$2 = 281,
+  spaces = 281,
+  newline$2 = 282,
   LineComment$1 = 4,
   BlockComment$1 = 5,
   Dialect_ts = 1;
@@ -26018,31 +26225,31 @@ function tsExtends(value, stack) {
 }
 
 // This file was generated by lezer-generator. You probably shouldn't edit it.
-const spec_identifier$1 = {__proto__:null,export:16, as:21, from:25, default:30, async:35, function:36, this:46, true:54, false:54, void:60, typeof:64, null:78, super:80, new:114, await:131, yield:133, delete:134, class:144, extends:146, public:187, private:187, protected:187, readonly:189, in:210, instanceof:212, const:214, import:246, keyof:297, unique:301, infer:307, is:341, abstract:361, implements:363, type:365, let:368, var:370, interface:377, enum:381, namespace:387, module:389, declare:393, global:397, for:418, of:427, while:430, with:434, do:438, if:442, else:444, switch:448, case:454, try:460, catch:462, finally:464, return:468, throw:472, break:476, continue:480, debugger:484};
-const spec_word = {__proto__:null,async:101, get:103, set:105, public:153, private:153, protected:153, static:155, abstract:157, override:159, readonly:165, new:345};
+const spec_identifier$1 = {__proto__:null,export:16, as:21, from:25, default:30, async:35, function:36, this:46, true:54, false:54, void:60, typeof:64, null:78, super:80, new:114, await:131, yield:133, delete:134, class:144, extends:146, public:189, private:189, protected:189, readonly:191, instanceof:212, in:214, const:216, import:248, keyof:299, unique:303, infer:309, is:343, abstract:363, implements:365, type:367, let:370, var:372, interface:379, enum:383, namespace:389, module:391, declare:395, global:399, for:420, of:429, while:432, with:436, do:440, if:444, else:446, switch:450, case:456, try:462, catch:464, finally:466, return:470, throw:474, break:478, continue:482, debugger:486};
+const spec_word = {__proto__:null,async:101, get:103, set:105, public:153, private:153, protected:153, static:155, abstract:157, override:159, readonly:165, new:347};
 const spec_LessThan = {__proto__:null,"<":121};
 const parser$3 = LRParser.deserialize({
   version: 13,
-  states: "$0nO`QYOOO&}Q!LdO'#CgO'UOSO'#DSO)^QYO'#DXO)nQYO'#DdO)uQYO'#DnO-lQYO'#DtOOQO'#EW'#EWO.PQWO'#EVO.UQWO'#EVO0TQ!LdO'#IpO2kQ!LdO'#IqO3XQWO'#EuO3^QpO'#F[OOQ!LS'#E}'#E}O3fO!bO'#E}O3tQWO'#FcO5RQWO'#FbOOQ!LS'#Iq'#IqOOQ!LQ'#Ip'#IpOOQQ'#JZ'#JZO5WQWO'#HiO5]Q!LYO'#HjOOQQ'#Ib'#IbOOQQ'#Hk'#HkQ`QYOOO)uQYO'#DfO5eQWO'#GVO5jQ#tO'#ClO5xQWO'#EUO6TQ#tO'#E|O6oQWO'#GVO6tQWO'#GZO7PQWO'#GZO7_QWO'#G^O7_QWO'#G_O7_QWO'#GaO5eQWO'#GdO8OQWO'#GgO9^QWO'#CcO9nQWO'#GtO9vQWO'#GzO9vQWO'#G|O`QYO'#HOO9vQWO'#HQO9vQWO'#HTO9{QWO'#HZO:QQ!LZO'#H_O)uQYO'#HaO:]Q!LZO'#HcO:hQ!LZO'#HeO5]Q!LYO'#HgO)uQYO'#IrOOOS'#Hm'#HmO:sOSO,59nOOQ!LS,59n,59nO=UQbO'#CgO=`QYO'#HnO=mQWO'#IsO?lQbO'#IsO'aQYO'#IsO?sQWO,59sO@ZQ&jO'#D^OASQWO'#EWOAaQWO'#JOOAlQWO'#I}OAtQWO,5:tOAyQWO'#I|OBQQWO'#DuO5jQ#tO'#EUOB`QWO'#EUOBkQ`O'#E|OOQ!LS,5:O,5:OOBsQYO,5:OODqQ!LdO,5:YOE_QWO,5:`OExQ!LYO'#I{O6tQWO'#IzOFPQWO'#IzOFXQWO,5:sOF^QWO'#IzOFlQYO,5:qOHiQWO'#ESOIsQWO,5:qOKSQWO'#DhOKZQYO'#DmOKeQ&jO,5:zO)uQYO,5:zOOQQ'#Em'#EmOOQQ'#Eo'#EoO)uQYO,5:|O)uQYO,5:|O)uQYO,5:|O)uQYO,5:|O)uQYO,5:|O)uQYO,5:|O)uQYO,5:|O)uQYO,5:|O)uQYO,5:|O)uQYO,5:|O)uQYO,5:|OOQQ'#Es'#EsOKmQYO,5;^OOQ!LS,5;c,5;cOOQ!LS,5;d,5;dOMjQWO,5;dOOQ!LS,5;e,5;eO)uQYO'#HxOMoQ!LYO,5<OONZQWO,5:|O)uQYO,5;aONsQpO'#JSONbQpO'#JSONzQpO'#JSO! ]QpO,5;lOOOO,5;v,5;vO! kQYO'#F^OOOO'#Hw'#HwO3fO!bO,5;iO! rQpO'#F`OOQ!LS,5;i,5;iO!!`Q,UO'#CqOOQ!LS'#Ct'#CtO!!sQWO'#CtO!!xOSO'#CxO!#fQ#tO,5;{O!#mQWO,5;}O!$yQWO'#FmO!%WQWO'#FnO!%]QWO'#FrO!&_Q&jO'#FvO!'QQ,UO'#IkOOQ!LS'#Ik'#IkO!'[QWO'#IjO!'jQWO'#IiOOQ!LS'#Cr'#CrOOQ!LS'#Cy'#CyO!'rQWO'#C{OIxQWO'#FeOIxQWO'#FgO!'wQWO'#FiO!'|QWO'#FjO!(RQWO'#FpOIxQWO'#FuO!(WQWO'#EXO!(oQWO,5;|O`QYO,5>TOOQQ'#Ie'#IeOOQQ,5>U,5>UOOQQ-E;i-E;iO!*kQ!LdO,5:QOOQ!LQ'#Co'#CoO!+[Q#tO,5<qOOQO'#Ce'#CeO!+mQWO'#CpO!+uQ!LYO'#IfO5RQWO'#IfO9{QWO,59WO!,TQpO,59WO!,]Q#tO,59WO5jQ#tO,59WO!,hQWO,5:qO!,pQWO'#GsO!,{QWO'#J_O)uQYO,5;fO!-TQ&jO,5;hO!-YQWO,5=^O!-_QWO,5=^O!-dQWO,5=^O5]Q!LYO,5=^O5eQWO,5<qO!-rQWO'#EYO!.TQ&jO'#EZOOQ!LQ'#I|'#I|O!.fQ!LYO'#J[O5]Q!LYO,5<uO7_QWO,5<{OOQO'#Cq'#CqO!.qQpO,5<xO!.yQ#tO,5<yO!/UQWO,5<{O!/ZQ`O,5=OO9{QWO'#GiO5eQWO'#GkO!/cQWO'#GkO5jQ#tO'#GnO!/hQWO'#GnOOQQ,5=R,5=RO!/mQWO'#GoO!/uQWO'#ClO!/zQWO,58}O!0UQWO,58}O!2TQYO,58}OOQQ,58},58}O!2bQ!LYO,58}O)uQYO,58}O!2mQYO'#GvOOQQ'#Gw'#GwOOQQ'#Gx'#GxO`QYO,5=`O!2}QWO,5=`O)uQYO'#DtO`QYO,5=fO`QYO,5=hO!3SQWO,5=jO`QYO,5=lO!3XQWO,5=oO!3^QYO,5=uOOQQ,5=y,5=yO)uQYO,5=yO5]Q!LYO,5={OOQQ,5=},5=}O!7[QWO,5=}OOQQ,5>P,5>PO!7[QWO,5>POOQQ,5>R,5>RO!7aQ`O,5?^OOOS-E;k-E;kOOQ!LS1G/Y1G/YO!7fQbO,5>YO)uQYO,5>YOOQO-E;l-E;lO!7pQWO,5?_O!7xQbO,5?_O!8PQWO,5?iOOQ!LS1G/_1G/_O!8XQpO'#DQOOQO'#Iu'#IuO)uQYO'#IuO!8vQpO'#IuO!9eQpO'#D_O!9vQ&jO'#D_O!<OQYO'#D_O!<VQWO'#ItO!<_QWO,59xO!<dQWO'#E[O!<rQWO'#JPO!<zQWO,5:uO!=bQ&jO'#D_O)uQYO,5?jO!=lQWO'#HsO!8PQWO,5?iOOQ!LQ1G0`1G0`O!>xQ&jO'#DxOOQ!LS,5:a,5:aO)uQYO,5:aOHiQWO,5:aO!?PQWO,5:aO9{QWO,5:pO!,TQpO,5:pO!,]Q#tO,5:pO5jQ#tO,5:pOOQ!LS1G/j1G/jOOQ!LS1G/z1G/zOOQ!LQ'#ER'#ERO)uQYO,5?gO!?[Q!LYO,5?gO!?mQ!LYO,5?gO!?tQWO,5?fO!?|QWO'#HuO!?tQWO,5?fOOQ!LQ1G0_1G0_O6tQWO,5?fOOQ!LS1G0]1G0]O!@hQ!LdO1G0]O!AXQ!LbO,5:nOOQ!LS'#Fl'#FlO!AuQ!LdO'#IkOFlQYO1G0]O!CtQ#tO'#IvO!DOQWO,5:SO!DTQbO'#IwO)uQYO'#IwO!D_QWO,5:XOOQ!LS'#DQ'#DQOOQ!LS'#Ea'#EaOOQ!LS1G0f1G0fO!DdQWO1G0fO!FuQ!LdO1G0hO!F|Q!LdO1G0hO!IaQ!LdO1G0hO!IhQ!LdO1G0hO!KoQ!LdO1G0hO!LSQ!LdO1G0hO!NsQ!LdO1G0hO!NzQ!LdO1G0hO##_Q!LdO1G0hO##fQ!LdO1G0hO#%ZQ!LdO1G0hO#(TQ7^O'#CgO#*OQ7^O1G0xO#+yQ7^O'#IqOOQ!LS1G1O1G1OO#,^Q!LdO,5>dOOQ!LQ-E;v-E;vO#,}Q!LdO1G0hOOQ!LS1G0h1G0hO#/PQ!LdO1G0{O#/pQpO,5;nO#/uQpO,5;oO#/zQpO'#FVO#0`QWO'#FUOOQO'#JT'#JTOOQO'#Hv'#HvO#0eQpO1G1WOOQ!LS1G1W1G1WOOOO1G1a1G1aO#0sQ7^O'#IpO#0}QWO,5;xOKmQYO,5;xOOOO-E;u-E;uOOQ!LS1G1T1G1TOOQ!LS,5;z,5;zO#1SQpO,5;zOOQ!LS,59`,59`OHiQWO'#ImOOOS'#Hl'#HlO#1XOSO,59dOOQ!LS,59d,59dO)uQYO1G1gO!'|QWO'#HzO#1dQWO,5<`OOQ!LS,5<],5<]OOQO'#GQ'#GQOIxQWO,5<kOOQO'#GS'#GSOIxQWO,5<mOIxQWO,5<oOOQO1G1i1G1iO#1oQ`O'#CoO#2SQ`O,5<XO#2ZQWO'#JWO5eQWO'#JWO#2iQWO,5<ZOIxQWO,5<YO#2nQ`O'#FlO#2{Q`O'#JXO#3VQWO'#JXOHiQWO'#JXO#3[QWO,5<^OOQ!LQ'#Dc'#DcO#3aQWO'#FoO#3lQpO'#FwO!&YQ&jO'#FwO!&YQ&jO'#FyO#3}QWO'#FzO!(RQWO'#F}OOQO'#H|'#H|O#4SQ&jO,5<bOOQ!LS,5<b,5<bO#4ZQ&jO'#FwO#4iQ&jO'#FxO#4qQ&jO'#FxOOQ!LS,5<p,5<pOIxQWO,5?UOIxQWO,5?UO#4vQWO'#H}O#5RQWO,5?TOOQ!LS'#Cg'#CgO#5uQ#tO,59gOOQ!LS,59g,59gO#6hQ#tO,5<PO#7ZQ#tO,5<RO#7eQWO,5<TOOQ!LS,5<U,5<UO#7jQWO,5<[O#7oQ#tO,5<aOFlQYO1G1hO#8PQWO1G1hOOQQ1G3o1G3oOOQ!LS1G/l1G/lOMjQWO1G/lOOQQ1G2]1G2]OHiQWO1G2]O)uQYO1G2]OHiQWO1G2]O#8UQWO1G2]O#8dQWO,59[O#9mQWO'#ESOOQ!LQ,5?Q,5?QO#9wQ!LYO,5?QOOQQ1G.r1G.rO9{QWO1G.rO!,TQpO1G.rO!,]Q#tO1G.rO#:VQWO1G0]O#:[QWO'#CgO#:gQWO'#J`O#:oQWO,5=_O#:tQWO'#J`O#:yQWO'#J`O#;OQWO'#IVO#;^QWO,5?yO#;fQbO1G1QOOQ!LS1G1S1G1SO5eQWO1G2xO#;mQWO1G2xO#;rQWO1G2xO#;wQWO1G2xOOQQ1G2x1G2xO#;|Q#tO1G2]O6tQWO'#I}O6tQWO'#E[O6tQWO'#IPO#<_Q!LYO,5?vOOQQ1G2a1G2aO!/UQWO1G2gOHiQWO1G2dO#<jQWO1G2dOOQQ1G2e1G2eOHiQWO1G2eO#<oQWO1G2eO#<wQ&jO'#GcOOQQ1G2g1G2gO!&YQ&jO'#IRO!/ZQ`O1G2jOOQQ1G2j1G2jOOQQ,5=T,5=TO#=PQ#tO,5=VO5eQWO,5=VO#3}QWO,5=YO5RQWO,5=YO!,TQpO,5=YO!,]Q#tO,5=YO5jQ#tO,5=YO#=bQWO'#J^O#=mQWO,5=ZOOQQ1G.i1G.iO#=rQ!LYO1G.iO#=}QWO1G.iO!'rQWO1G.iO5]Q!LYO1G.iO#>SQbO,5?{O#>^QWO,5?{O#>iQYO,5=bO#>pQWO,5=bO6tQWO,5?{OOQQ1G2z1G2zO`QYO1G2zOOQQ1G3Q1G3QOOQQ1G3S1G3SO9vQWO1G3UO#>uQYO1G3WO#BmQYO'#HVOOQQ1G3Z1G3ZO9{QWO1G3aO#BzQWO1G3aO5]Q!LYO1G3eOOQQ1G3g1G3gOOQ!LQ'#Fs'#FsO5]Q!LYO1G3iO5]Q!LYO1G3kOOOS1G4x1G4xO#CSQ`O,5<OO#C[QbO1G3tO#CfQWO1G4yO#CnQWO1G5TO#CvQWO,5?aOKmQYO,5:vO6tQWO,5:vO9{QWO,59yOKmQYO,59yO!,TQpO,59yO#C{Q7^O,59yOOQO,5:v,5:vO#DVQ&jO'#HoO#DmQWO,5?`OOQ!LS1G/d1G/dO#DuQ&jO'#HtO#EZQWO,5?kOOQ!LQ1G0a1G0aO!9vQ&jO,59yO#EcQbO1G5UOOQO,5>_,5>_O6tQWO,5>_OOQO-E;q-E;qOOQ!LQ'#EO'#EOO#EmQ!LrO'#EPO!>pQ&jO'#DyOOQO'#Hr'#HrO#FXQ&jO,5:dOOQ!LS,5:d,5:dO#F`Q&jO'#DyO#FqQ&jO'#DyO#FxQ&jO'#EPO#GVQ&jO'#EPO!>pQ&jO'#EPO#GjQWO1G/{O#GoQ`O1G/{OOQ!LS1G/{1G/{O)uQYO1G/{OHiQWO1G/{OOQ!LS1G0[1G0[O9{QWO1G0[O!,TQpO1G0[O!,]Q#tO1G0[O#GvQ!LdO1G5RO)uQYO1G5RO#HWQ!LYO1G5RO#HiQWO1G5QO6tQWO,5>aOOQO,5>a,5>aO#HqQWO,5>aOOQO-E;s-E;sO#HiQWO1G5QO#IPQ!LdO,59gO#KOQ!LdO,5<PO#MQQ!LdO,5<RO$ SQ!LdO,5<aOOQ!LS7+%w7+%wO$#[Q!LdO7+%wO$#{QWO'#HpO$$VQWO,5?bOOQ!LS1G/n1G/nO$$_QYO'#HqO$$lQWO,5?cO$$tQbO,5?cOOQ!LS1G/s1G/sOOQ!LS7+&Q7+&QO$%OQ7^O,5:YO)uQYO7+&dO$%YQ7^O,5:QOOQO1G1Y1G1YOOQO1G1Z1G1ZO$%gQMhO,5;qOKmQYO,5;pOOQO-E;t-E;tOOQ!LS7+&r7+&rOOOO7+&{7+&{OOOO1G1d1G1dO$%rQWO1G1dOOQ!LS1G1f1G1fO$%wQ`O,5?XOOOS-E;j-E;jOOQ!LS1G/O1G/OO$&OQ!LdO7+'ROOQ!LS,5>f,5>fO$&oQWO,5>fOOQ!LS1G1z1G1zP$&tQWO'#HzPOQ!LS-E;x-E;xO$'eQ#tO1G2VO$(WQ#tO1G2XO$(bQ#tO1G2ZOOQ!LS1G1s1G1sO$(iQWO'#HyO$(wQWO,5?rO$(wQWO,5?rO$)PQWO,5?rO$)[QWO,5?rOOQO1G1u1G1uO$)jQ#tO1G1tO$)zQWO'#H{O$*[QWO,5?sOHiQWO,5?sO$*dQ`O,5?sOOQ!LS1G1x1G1xO5]Q!LYO,5<cO5]Q!LYO,5<dO$*nQWO,5<dO#3xQWO,5<dO!,TQpO,5<cO$*sQWO,5<eO5]Q!LYO,5<fO$*nQWO,5<iOOQO-E;z-E;zOOQ!LS1G1|1G1|O!&YQ&jO,5<cO$*{QWO,5<dO!&YQ&jO,5<eO!&YQ&jO,5<dO$+WQ#tO1G4pO$+bQ#tO1G4pOOQO,5>i,5>iOOQO-E;{-E;{O!-TQ&jO,59iO)uQYO,59iO$+oQWO1G1oOIxQWO1G1vO$+tQ!LdO7+'SOOQ!LS7+'S7+'SOFlQYO7+'SOOQ!LS7+%W7+%WO$,eQ`O'#JYO#GjQWO7+'wO$,oQWO7+'wO$,wQ`O7+'wOOQQ7+'w7+'wOHiQWO7+'wO)uQYO7+'wOHiQWO7+'wOOQO1G.v1G.vO$-RQ!LbO'#CgO$-cQ!LbO,5<gO$.QQWO,5<gOOQ!LQ1G4l1G4lOOQQ7+$^7+$^O9{QWO7+$^O!,TQpO7+$^OFlQYO7+%wO$.VQWO'#IUO$.eQWO,5?zOOQO1G2y1G2yO5eQWO,5?zO$.eQWO,5?zO$.mQWO,5?zOOQO,5>q,5>qOOQO-E<T-E<TOOQ!LS7+&l7+&lO$.rQWO7+(dO5]Q!LYO7+(dO5eQWO7+(dO$.wQWO7+(dO$.|QWO7+'wOOQ!LQ,5>k,5>kOOQ!LQ-E;}-E;}OOQQ7+(R7+(RO$/[Q!LbO7+(OOHiQWO7+(OO$/fQ`O7+(POOQQ7+(P7+(POHiQWO7+(PO$/mQWO'#J]O$/xQWO,5<}OOQO,5>m,5>mOOQO-E<P-E<POOQQ7+(U7+(UO$0rQ&jO'#GlOOQQ1G2q1G2qOHiQWO1G2qO)uQYO1G2qOHiQWO1G2qO$0yQWO1G2qO$1XQ#tO1G2qO5]Q!LYO1G2tO#3}QWO1G2tO5RQWO1G2tO!,TQpO1G2tO!,]Q#tO1G2tO$1jQWO'#ITO$1uQWO,5?xO$1}Q&jO,5?xOOQ!LQ1G2u1G2uOOQQ7+$T7+$TO$2SQWO7+$TO5]Q!LYO7+$TO$2XQWO7+$TO)uQYO1G5gO)uQYO1G5hO$2^QYO1G2|O$2eQWO1G2|O$2jQYO1G2|O$2qQ!LYO1G5gOOQQ7+(f7+(fO5]Q!LYO7+(pO`QYO7+(rOOQQ'#Jc'#JcOOQQ'#IW'#IWO$2{QYO,5=qOOQQ,5=q,5=qO)uQYO'#HWO$3YQWO'#HYOOQQ7+({7+({O$3_QYO7+({O6tQWO7+({OOQQ7+)P7+)POOQQ7+)T7+)TOOQQ7+)V7+)VOOQO1G4{1G4{O$7YQ7^O1G0bO$7dQWO1G0bOOQO1G/e1G/eO$7oQ7^O1G/eO9{QWO1G/eOKmQYO'#D_OOQO,5>Z,5>ZOOQO-E;m-E;mOOQO,5>`,5>`OOQO-E;r-E;rO!,TQpO1G/eOOQO1G3y1G3yO9{QWO,5:eOOQO,5:k,5:kO)uQYO,5:kO$7yQ!LYO,5:kO$8UQ!LYO,5:kO!,TQpO,5:eOOQO-E;p-E;pOOQ!LS1G0O1G0OO!>pQ&jO,5:eO$8dQ&jO,5:eO$8uQ!LrO,5:kO$9aQ&jO,5:eO!>pQ&jO,5:kO$9hQ&jO,5:kO$9uQ!LYO,5:kOOQ!LS7+%g7+%gO#GjQWO7+%gO#GoQ`O7+%gOOQ!LS7+%v7+%vO9{QWO7+%vO!,TQpO7+%vO$:ZQ!LdO7+*mO)uQYO7+*mOOQO1G3{1G3{O6tQWO1G3{O$:kQWO7+*lO$:sQ!LdO1G2VO$<uQ!LdO1G2XO$>wQ!LdO1G1tO$APQ#tO,5>[OOQO-E;n-E;nO$AZQbO,5>]O)uQYO,5>]OOQO-E;o-E;oO$AeQWO1G4}O$AmQ7^O1G0]O$CtQ7^O1G0hO$C{Q7^O1G0hO$E|Q7^O1G0hO$FTQ7^O1G0hO$GxQ7^O1G0hO$H]Q7^O1G0hO$JjQ7^O1G0hO$JqQ7^O1G0hO$LrQ7^O1G0hO$LyQ7^O1G0hO$NnQ7^O1G0hO% RQ!LdO<<JOO% rQ7^O1G0hO%#bQ7^O'#IkO%%_Q7^O1G0{OKmQYO'#FXOOQO'#JU'#JUOOQO1G1]1G1]O%%lQWO1G1[O%%qQ7^O,5>dOOOO7+'O7+'OOOOS1G4s1G4sOOQ!LS1G4Q1G4QOIxQWO7+'uO%%{QWO,5>eO5eQWO,5>eOOQO-E;w-E;wO%&ZQWO1G5^O%&ZQWO1G5^O%&cQWO1G5^O%&nQ`O,5>gO%&xQWO,5>gOHiQWO,5>gOOQO-E;y-E;yO%&}Q`O1G5_O%'XQWO1G5_OOQO1G1}1G1}OOQO1G2O1G2OO5]Q!LYO1G2OO$*nQWO1G2OO5]Q!LYO1G1}O%'aQWO1G2POHiQWO1G2POOQO1G2Q1G2QO5]Q!LYO1G2TO!,TQpO1G1}O#3xQWO1G2OO%'fQWO1G2PO%'nQWO1G2OOIxQWO7+*[OOQ!LS1G/T1G/TO%'yQWO1G/TOOQ!LS7+'Z7+'ZO%(OQ#tO7+'bO%(`Q!LdO<<JnOOQ!LS<<Jn<<JnOHiQWO'#IOO%)PQWO,5?tOOQQ<<Kc<<KcOHiQWO<<KcO#GjQWO<<KcO%)XQWO<<KcO%)aQ`O<<KcOHiQWO1G2ROOQQ<<Gx<<GxO9{QWO<<GxO%)kQ!LdO<<IcOOQ!LS<<Ic<<IcOOQO,5>p,5>pO%*[QWO,5>pO#:yQWO,5>pOOQO-E<S-E<SO%*aQWO1G5fO%*aQWO1G5fO5eQWO1G5fO%*iQWO<<LOOOQQ<<LO<<LOO%*nQWO<<LOO5]Q!LYO<<LOO)uQYO<<KcOHiQWO<<KcOOQQ<<Kj<<KjO$/[Q!LbO<<KjOOQQ<<Kk<<KkO$/fQ`O<<KkO%*sQ&jO'#IQO%+OQWO,5?wOKmQYO,5?wOOQQ1G2i1G2iO#EmQ!LrO'#EPO!>pQ&jO'#GmOOQO'#IS'#ISO%+WQ&jO,5=WOOQQ,5=W,5=WO%+_Q&jO'#EPO%+jQ&jO'#EPO%,RQ&jO'#EPO%,]Q&jO'#GmO%,nQWO7+(]O%,sQWO7+(]O%,{Q`O7+(]OOQQ7+(]7+(]OHiQWO7+(]O)uQYO7+(]OHiQWO7+(]O%-VQWO7+(]OOQQ7+(`7+(`O5]Q!LYO7+(`O#3}QWO7+(`O5RQWO7+(`O!,TQpO7+(`O%-eQWO,5>oOOQO-E<R-E<ROOQO'#Gp'#GpO%-pQWO1G5dO5]Q!LYO<<GoOOQQ<<Go<<GoO%-xQWO<<GoO%-}QWO7++RO%.SQWO7++SOOQQ7+(h7+(hO%.XQWO7+(hO%.^QYO7+(hO%.eQWO7+(hO)uQYO7++RO)uQYO7++SOOQQ<<L[<<L[OOQQ<<L^<<L^OOQQ-E<U-E<UOOQQ1G3]1G3]O%.jQWO,5=rOOQQ,5=t,5=tO9{QWO<<LgO%.oQWO<<LgOKmQYO7+%|OOQO7+%P7+%PO%.tQ7^O1G5UO9{QWO7+%POOQO1G0P1G0PO%/OQ!LdO1G0VOOQO1G0V1G0VO)uQYO1G0VO%/YQ!LYO1G0VO9{QWO1G0PO!,TQpO1G0PO!>pQ&jO1G0PO%/eQ!LYO1G0VO%/sQ&jO1G0PO%0UQ!LYO1G0VO%0jQ!LrO1G0VO%0tQ&jO1G0PO!>pQ&jO1G0VOOQ!LS<<IR<<IROOQ!LS<<Ib<<IbO9{QWO<<IbO%0{Q!LdO<<NXOOQO7+)g7+)gO%1]Q!LdO7+'bO%3eQbO1G3wO%3oQ7^O7+%wO%3|Q7^O,59gO%5yQ7^O,5<PO%7vQ7^O,5<RO%9sQ7^O,5<aO%;cQ7^O7+'RO%;pQ7^O7+'SO%;}QWO,5;sOOQO7+&v7+&vO%<SQ#tO<<KaOOQO1G4P1G4PO%<dQWO1G4PO%<oQWO1G4PO%<}QWO7+*xO%<}QWO7+*xOHiQWO1G4RO%=VQ`O1G4RO%=aQWO7+*yOOQO7+'j7+'jO5]Q!LYO7+'jOOQO7+'i7+'iO$*nQWO7+'kO%=iQ`O7+'kOOQO7+'o7+'oO5]Q!LYO7+'iO$*nQWO7+'jO%=pQWO7+'kOHiQWO7+'kO#3xQWO7+'jO%=uQ#tO<<MvOOQ!LS7+$o7+$oO%>PQ`O,5>jOOQO-E;|-E;|O#GjQWOAN@}OOQQAN@}AN@}OHiQWOAN@}O%>ZQ!LbO7+'mOOQQAN=dAN=dO5eQWO1G4[OOQO1G4[1G4[O%>hQWO1G4[O%>mQWO7++QO%>mQWO7++QO5]Q!LYOANAjO%>uQWOANAjOOQQANAjANAjO%>zQWOAN@}O%?SQ`OAN@}OOQQANAUANAUOOQQANAVANAVO%?^QWO,5>lOOQO-E<O-E<OO%?iQ7^O1G5cO#3}QWO,5=XO5RQWO,5=XO!,TQpO,5=XOOQO-E<Q-E<QOOQQ1G2r1G2rO$8uQ!LrO,5:kO!>pQ&jO,5=XO%?sQ&jO,5=XO%@UQ&jO,5:kOOQQ<<Kw<<KwOHiQWO<<KwO%,nQWO<<KwO%@`QWO<<KwO%@hQ`O<<KwO)uQYO<<KwOHiQWO<<KwOOQQ<<Kz<<KzO5]Q!LYO<<KzO#3}QWO<<KzO5RQWO<<KzO%@rQ&jO1G4ZO%@wQWO7++OOOQQAN=ZAN=ZO5]Q!LYOAN=ZOOQQ<<Nm<<NmOOQQ<<Nn<<NnOOQQ<<LS<<LSO%APQWO<<LSO%AUQYO<<LSO%A]QWO<<NmO%AbQWO<<NnOOQQ1G3^1G3^OOQQANBRANBRO9{QWOANBRO%AgQ7^O<<IhOOQO<<Hk<<HkOOQO7+%q7+%qO%/OQ!LdO7+%qO)uQYO7+%qOOQO7+%k7+%kO9{QWO7+%kO!,TQpO7+%kO%AqQ!LYO7+%qO!>pQ&jO7+%kO%A|Q!LYO7+%qO%B[Q&jO7+%kO%BmQ!LYO7+%qOOQ!LSAN>|AN>|O%CRQ!LdO<<KaO%EZQ7^O<<JOO%EhQ7^O1G1tO%GWQ7^O1G2VO%ITQ7^O1G2XO%KQQ7^O<<JnO%K_Q7^O<<IcOOQO1G1_1G1_OOQO7+)k7+)kO%KlQWO7+)kO%KwQWO<<NdO%LPQ`O7+)mOOQO<<KU<<KUO5]Q!LYO<<KVO$*nQWO<<KVOOQO<<KT<<KTO5]Q!LYO<<KUO%LZQ`O<<KVO$*nQWO<<KUOOQQG26iG26iO#GjQWOG26iOOQO7+)v7+)vO5eQWO7+)vO%LbQWO<<NlOOQQG27UG27UO5]Q!LYOG27UOHiQWOG26iOKmQYO1G4WO%LjQWO7+*}O5]Q!LYO1G2sO#3}QWO1G2sO5RQWO1G2sO!,TQpO1G2sO!>pQ&jO1G2sO%0jQ!LrO1G0VO%LrQ&jO1G2sO%,nQWOANAcOOQQANAcANAcOHiQWOANAcO%MTQWOANAcO%M]Q`OANAcOOQQANAfANAfO5]Q!LYOANAfO#3}QWOANAfOOQO'#Gq'#GqOOQO7+)u7+)uOOQQG22uG22uOOQQANAnANAnO%MgQWOANAnOOQQANDXANDXOOQQANDYANDYO%MlQYOG27mOOQO<<I]<<I]O%/OQ!LdO<<I]OOQO<<IV<<IVO9{QWO<<IVO)uQYO<<I]O!,TQpO<<IVO&#gQ!LYO<<I]O!>pQ&jO<<IVO&#rQ!LYO<<I]O&$QQ7^O7+'bOOQO<<MV<<MVOOQOAN@qAN@qO5]Q!LYOAN@qOOQOAN@pAN@pO$*nQWOAN@qO5]Q!LYOAN@pOOQQLD,TLD,TOOQO<<Mb<<MbOOQQLD,pLD,pO#GjQWOLD,TO&%pQ7^O7+)rOOQO7+(_7+(_O5]Q!LYO7+(_O#3}QWO7+(_O5RQWO7+(_O!,TQpO7+(_O!>pQ&jO7+(_OOQQG26}G26}O%,nQWOG26}OHiQWOG26}OOQQG27QG27QO5]Q!LYOG27QOOQQG27YG27YO9{QWOLD-XOOQOAN>wAN>wOOQOAN>qAN>qO%/OQ!LdOAN>wO9{QWOAN>qO)uQYOAN>wO!,TQpOAN>qO&%zQ!LYOAN>wO&&VQ7^O<<KaOOQOG26]G26]O5]Q!LYOG26]OOQOG26[G26[OOQQ!$( o!$( oOOQO<<Ky<<KyO5]Q!LYO<<KyO#3}QWO<<KyO5RQWO<<KyO!,TQpO<<KyOOQQLD,iLD,iO%,nQWOLD,iOOQQLD,lLD,lOOQQ!$(!s!$(!sOOQOG24cG24cOOQOG24]G24]O%/OQ!LdOG24cO9{QWOG24]O)uQYOG24cOOQOLD+wLD+wOOQOANAeANAeO5]Q!LYOANAeO#3}QWOANAeO5RQWOANAeOOQQ!$(!T!$(!TOOQOLD)}LD)}OOQOLD)wLD)wO%/OQ!LdOLD)}OOQOG27PG27PO5]Q!LYOG27PO#3}QWOG27POOQO!$'Mi!$'MiOOQOLD,kLD,kO5]Q!LYOLD,kOOQO!$(!V!$(!VOKmQYO'#DnO&'uQbO'#IpOKmQYO'#DfO&'|Q!LdO'#CgO&(gQbO'#CgO&(wQYO,5:qOKmQYO,5:|OKmQYO,5:|OKmQYO,5:|OKmQYO,5:|OKmQYO,5:|OKmQYO,5:|OKmQYO,5:|OKmQYO,5:|OKmQYO,5:|OKmQYO,5:|OKmQYO,5:|OKmQYO'#HxO&*tQWO,5<OO&,WQWO,5:|OKmQYO,5;aO!'rQWO'#C{O!'rQWO'#C{OHiQWO'#FeO&*|QWO'#FeOHiQWO'#FgO&*|QWO'#FgOHiQWO'#FuO&*|QWO'#FuOKmQYO,5?jO&(wQYO1G0]O&,_Q7^O'#CgOKmQYO1G1gOHiQWO,5<kO&*|QWO,5<kOHiQWO,5<mO&*|QWO,5<mOHiQWO,5<YO&*|QWO,5<YO&(wQYO1G1hOKmQYO7+&dOHiQWO1G1vO&*|QWO1G1vO&(wQYO7+'SO&(wQYO7+%wOHiQWO7+'uO&*|QWO7+'uO&,iQWO'#EVO&,nQWO'#EVO&,vQWO'#EuO&,{QWO'#JOO&-WQWO'#I|O&-cQWO,5:qO&-hQ#tO,5;{O&-oQWO'#FnO&-tQWO'#FnO&-yQWO,5;|O&.RQWO,5:qO&.ZQ7^O1G0xO&.bQWO,5<[O&.gQWO,5<[O&.lQWO1G1hO&.qQWO1G0]O&.vQ#tO1G2ZO&.}Q#tO1G2ZO3tQWO'#FcO5RQWO'#FbOB`QWO'#EUOKmQYO,5;^O!(RQWO'#FpO!(RQWO'#FpOIxQWO,5<oOIxQWO,5<o",
-  stateData: "&/z~O'SOS'TOSSOSTOS~OPTOQTOWwO]bO^gOamOblOgbOiTOjbOkbOnTOpTOuROwbOxbOybO!PSO!ZjO!`UO!cTO!dTO!eTO!fTO!gTO!jkO#_qO#onO#s]O$zoO$|rO%OpO%PpO%SsO%UtO%XuO%YuO%[vO%ixO%oyO%qzO%s{O%u|O%x}O&O!OO&S!PO&U!QO&W!RO&Y!SO&[!TO'VPO'`QO'y`O~OPZXYZX^ZXiZXrZXsZXuZX}ZX!]ZX!^ZX!`ZX!fZX!wZX#RcX#VZX#WZX#XZX#YZX#ZZX#[ZX#]ZX#^ZX#`ZX#bZX#dZX#eZX#jZX'QZX'`ZX'mZX'tZX'uZX~O!X$gX~P$wO&}!VO'O!UO'P!XO~OPTOQTO]bOa!hOb!gOgbOiTOjbOkbOnTOpTOuROwbOxbOybO!P!`O!ZjO!`UO!cTO!dTO!eTO!fTO!gTO!j!fO#o!iO#s]O'V!YO'`QO'y`O~O|!^O}!ZOz'gPz'qP~P'aO!O!jO~P`OPTOQTO]bOa!hOb!gOgbOiTOjbOkbOnTOpTOuROwbOxbOybO!P!`O!ZjO!`UO!cTO!dTO!eTO!fTO!gTO!j!fO#o!iO#s]O'V9SO'`QO'y`O~OPTOQTO]bOa!hOb!gOgbOiTOjbOkbOnTOpTOuROwbOxbOybO!P!`O!ZjO!`UO!cTO!dTO!eTO!fTO!gTO!j!fO#o!iO#s]O'`QO'y`O~O|!oO#P!rO#Q!oO'V9TO!_'nP~P+rO#R!sO~O!X!tO#R!sO~OP#ZOY#aOi#OOr!xOs!xOu!yO}#_O!]#QO!^!vO!`!wO!f#ZO#V!|O#W!}O#X!}O#Y!}O#Z#PO#[#QO#]#QO#^#QO#`#RO#b#TO#d#VO#e#WO'`QO'm#XO't!zO'u!{O~O^'dX'Q'dX!_'dXz'dX!P'dX${'dX!X'dX~P.^O!w#bO#j#bOP'eXY'eX^'eXi'eXr'eXs'eXu'eX}'eX!]'eX!^'eX!`'eX!f'eX#V'eX#W'eX#X'eX#Y'eX#Z'eX#['eX#^'eX#`'eX#b'eX#d'eX#e'eX'`'eX'm'eX't'eX'u'eX~O#]'eX'Q'eXz'eX!_'eX'b'eX!P'eX${'eX!X'eX~P0nO!w#bO~O#u#cO#|#gO~O!P#hO#s]O$P#iO$R#kO~O]#nOg#{Oi#oOj#nOk#nOn#|Op#}Ou#uO!P#vO!Z$SO!`#sO#Q$TO#o$QO$Y$OO$[$PO$_$RO'V#mO'`#pO'Z']P~O!`$UO~O!X$WO~O^$XO'Q$XO~O'V$]O~O!`$UO'V$]O'W$_O'[$`O~Ob$fO!`$UO'V$]O~O]$oOr$kO!P$hO!`$jO$|$nO'V$]O'W$_O[(RP~O!j$pO~Ou$qO!P$rO'V$]O~Ou$qO!P$rO%U$vO'V$]O~O'V$wO~O#_qO$|rO%OpO%PpO%SsO%UtO%XuO%YuO~Oa%QOb%PO!j$}O$z%OO%^$|O~P7dOa%TOblO!P%SO!jkO#_qO$zoO%OpO%PpO%SsO%UtO%XuO%YuO%[vO~O_%WO!w%ZO$|%UO'W$_O~P8cO!`%[O!c%`O~O!`%aO~O!PSO~O^$XO&|%iO'Q$XO~O^$XO&|%lO'Q$XO~O^$XO&|%nO'Q$XO~O&}!VO'O!UO'P%rO~OPZXYZXiZXrZXsZXuZX}ZX}cX!]ZX!^ZX!`ZX!fZX!wZX!wcX#RcX#VZX#WZX#XZX#YZX#ZZX#[ZX#]ZX#^ZX#`ZX#bZX#dZX#eZX#jZX'`ZX'mZX'tZX'uZX~OzZXzcX~P;OO|%tOz&bX}&bX~P)uO}!ZOz'gX~OP#ZOY#aOi#OOr!xOs!xOu!yO}!ZO!]#QO!^!vO!`!wO!f#ZO#V!|O#W!}O#X!}O#Y!}O#Z#PO#[#QO#]#QO#^#QO#`#RO#b#TO#d#VO#e#WO'`QO'm#XO't!zO'u!{O~Oz'gX~P=uOz%yO~Ou%|O!S&WO!T&PO!U&PO'W$_O~O]%}Oj%}O|&QO'c%zO!O'hP!O'sP~P?xOz'pX}'pX!X'pX!_'pX'm'pX~O!w'pX#R!zX!O'pX~P@qO!w&XOz'rX}'rX~O}&YOz'qX~Oz&[O~O!w#bO~P@qOR&`O!P&]O!k&_O'V$]O~Ob&eO!`$UO'V$]O~Or$kO!`$jO~O!O&fO~P`Or!xOs!xOu!yO!^!vO!`!wO'`QOP!baY!bai!ba}!ba!]!ba!f!ba#V!ba#W!ba#X!ba#Y!ba#Z!ba#[!ba#]!ba#^!ba#`!ba#b!ba#d!ba#e!ba'm!ba't!ba'u!ba~O^!ba'Q!baz!ba!_!ba'b!ba!P!ba${!ba!X!ba~PBzO!_&gO~O!X!tO!w&iO'm&hO}'oX^'oX'Q'oX~O!_'oX~PEdO}&mO!_'nX~O!_&oO~Ou$qO!P$rO#Q&pO'V$]O~OPTOQTO]bOa!hOb!gOgbOiTOjbOkbOnTOpTOuROwbOxbOybO!PSO!ZjO!`UO!cTO!dTO!eTO!fTO!gTO!j!fO#o!iO#s]O'V9SO'`QO'y`O~O]#nOg#{Oi#oOj#nOk#nOn#|Op9fOu#uO!P#vO!Z:hO!`#sO#Q9lO#o$QO$Y9hO$[9jO$_$RO'V&tO'`#pO~O#R&vO~O]#nOg#{Oi#oOj#nOk#nOn#|Op#}Ou#uO!P#vO!Z$SO!`#sO#Q$TO#o$QO$Y$OO$[$PO$_$RO'V&tO'`#pO~O'Z'jP~PIxO|&zO!_'kP~P)uO'c&|O'l&}O~OP9POQ9PO]bOa:fOb!gOgbOi9POjbOkbOn9POp9POuROwbOxbOybO!P!`O!Z9RO!`UO!c9PO!d9PO!e9PO!f9PO!g9PO!j!fO#o!iO#s]O'V']O'`QO'y:dO~O!`!wO~O}#_O^$Wa'Q$Wa!_$Waz$Wa!P$Wa${$Wa!X$Wa~O#_'dO~PHiO!X'fO!P'vX#r'vX#u'vX#|'vX~Or'gO~PNbOr'gO!P'vX#r'vX#u'vX#|'vX~O!P'iO#r'mO#u'hO#|'nO~O|'qO~PKmO#u#cO#|'tO~Or$`Xu$`X!^$`X'm$`X't$`X'u$`X~OReX}eX!weX'ZeX'Z$`X~P! zOj'vO~O&}'xO'O'wO'P'zO~Or'|Ou'}O'm#XO't(PO'u(RO~O'Z'{O~P!#TO'Z(UO~O]#nOg#{Oi#oOj#nOk#nOn#|Op9fOu#uO!P#vO!Z:hO!`#sO#Q9lO#o$QO$Y9hO$[9jO$_$RO'`#pO~O|(YO'V(VO!_'zP~P!#rO#R([O~O|(`O'V(]Oz'{P~P!#rO^(iOi(nOu(fO!S(lO!T(eO!U(eO!`(cO!t(mO$r(hO'W$_O'c(bO~O!O(kO~P!%jO!^!vOr'_Xu'_X'm'_X't'_X'u'_X}'_X!w'_X~O'Z'_X#h'_X~P!&fOR(qO!w(pO}'^X'Z'^X~O}(rO'Z']X~O'V(tO~O!`(yO~O'V&tO~O!`(cO~Ou$qO|!oO!P$rO#P!rO#Q!oO'V$]O!_'nP~O!X!tO#R(}O~OP#ZOY#aOi#OOr!xOs!xOu!yO!]#QO!^!vO!`!wO!f#ZO#V!|O#W!}O#X!}O#Y!}O#Z#PO#[#QO#]#QO#^#QO#`#RO#b#TO#d#VO#e#WO'`QO'm#XO't!zO'u!{O~O^!Ya}!Ya'Q!Yaz!Ya!_!Ya'b!Ya!P!Ya${!Ya!X!Ya~P!(wOR)VO!P&]O!k)UO${)TO'[$`O~O'V$wO'Z']P~O!X)YO!P'YX^'YX'Q'YX~O!`$UO'[$`O~O!`$UO'V$]O'[$`O~O!X!tO#R&vO~O$|)fO'V)bO!O(SP~O})gO[(RX~O'c&|O~OY)kO~O[)lO~O!P$hO'V$]O'W$_O[(RP~Ou$qO|)qO!P$rO'V$]Oz'qP~O]&TOj&TO|)rO'c&|O!O'sP~O})sO^(OX'Q(OX~O!w)wO'[$`O~OR)zO!P#vO'[$`O~O!P)|O~Or*OO!PSO~O!j*TO~Ob*YO~O'V(tO!O(QP~Ob$fO~O$|rO'V$wO~P8cOY*`O[*_O~OPTOQTO]bOamOblOgbOiTOjbOkbOnTOpTOuROwbOxbOybO!ZjO!`UO!cTO!dTO!eTO!fTO!gTO!jkO#s]O$zoO'`QO'y`O~O!P!`O#o!iO'V9SO~P!0^O[*_O^$XO'Q$XO~O^*dO#_*fO%O*fO%P*fO~P)uO!`%[O~O%o*kO~O!P*mO~O&P*pO&Q*oOP%}aQ%}aW%}a]%}a^%}aa%}ab%}ag%}ai%}aj%}ak%}an%}ap%}au%}aw%}ax%}ay%}a!P%}a!Z%}a!`%}a!c%}a!d%}a!e%}a!f%}a!g%}a!j%}a#_%}a#o%}a#s%}a$z%}a$|%}a%O%}a%P%}a%S%}a%U%}a%X%}a%Y%}a%[%}a%i%}a%o%}a%q%}a%s%}a%u%}a%x%}a&O%}a&S%}a&U%}a&W%}a&Y%}a&[%}a&{%}a'V%}a'`%}a'y%}a!O%}a%v%}a_%}a%{%}a~O'V*sO~O'b*vO~Oz&ba}&ba~P!(wO}!ZOz'ga~Oz'ga~P=uO}&YOz'qa~O}tX}!VX!OtX!O!VX!XtX!X!VX!`!VX!wtX'[!VX~O!X*}O!w*|O}#OX}'iX!O#OX!O'iX!X'iX!`'iX'['iX~O!X+PO!`$UO'[$`O}!RX!O!RX~O]%{Oj%{Ou%|O'c(bO~OP9POQ9PO]bOa:fOb!gOgbOi9POjbOkbOn9POp9POuROwbOxbOybO!P!`O!Z9RO!`UO!c9PO!d9PO!e9PO!f9PO!g9PO!j!fO#o!iO#s]O'`QO'y:dO~O'V9pO~P!:UO}+TO!O'hX~O!O+VO~O!X*}O!w*|O}#OX!O#OX~O}+WO!O'sX~O!O+YO~O]%{Oj%{Ou%|O'W$_O'c(bO~O!T+ZO!U+ZO~P!=POu$qO|+^O!P$rO'V$]Oz&gX}&gX~O^+cO!S+fO!T+bO!U+bO!n+iO!o+hO!p+hO!q+gO!t+jO'W$_O'c(bO'l+`O~O!O+eO~P!>QOR+oO!P&]O!k+nO~O!w+uO}'oa!_'oa^'oa'Q'oa~O!X!tO~P!?[O}&mO!_'na~Ou$qO|+xO!P$rO#P+zO#Q+xO'V$]O}&iX!_&iX~O^!yi}!yi'Q!yiz!yi!_!yi'b!yi!P!yi${!yi!X!yi~P!(wO#R!va}!va!_!va!w!va!P!va^!va'Q!vaz!va~P!#TO#R'_XP'_XY'_X^'_Xi'_Xs'_X!]'_X!`'_X!f'_X#V'_X#W'_X#X'_X#Y'_X#Z'_X#['_X#]'_X#^'_X#`'_X#b'_X#d'_X#e'_X'Q'_X'`'_X!_'_Xz'_X!P'_X'b'_X${'_X!X'_X~P!&fO},TO'Z'jX~P!#TO'Z,VO~O},WO!_'kX~P!(wO!_,ZO~Oz,[O~OP#ZOr!xOs!xOu!yO!^!vO!`!wO!f#ZO'`QOY#Ui^#Uii#Ui}#Ui!]#Ui#W#Ui#X#Ui#Y#Ui#Z#Ui#[#Ui#]#Ui#^#Ui#`#Ui#b#Ui#d#Ui#e#Ui'Q#Ui'm#Ui't#Ui'u#Uiz#Ui!_#Ui'b#Ui!P#Ui${#Ui!X#Ui~O#V#Ui~P!DiO#V!|O~P!DiOP#ZOr!xOs!xOu!yO!^!vO!`!wO!f#ZO#V!|O#W!}O#X!}O#Y!}O'`QOY#Ui^#Ui}#Ui!]#Ui#Z#Ui#[#Ui#]#Ui#^#Ui#`#Ui#b#Ui#d#Ui#e#Ui'Q#Ui'm#Ui't#Ui'u#Uiz#Ui!_#Ui'b#Ui!P#Ui${#Ui!X#Ui~Oi#Ui~P!GTOi#OO~P!GTOP#ZOi#OOr!xOs!xOu!yO!^!vO!`!wO!f#ZO#V!|O#W!}O#X!}O#Y!}O#Z#PO'`QO^#Ui}#Ui#`#Ui#b#Ui#d#Ui#e#Ui'Q#Ui'm#Ui't#Ui'u#Uiz#Ui!_#Ui'b#Ui!P#Ui${#Ui!X#Ui~OY#Ui!]#Ui#[#Ui#]#Ui#^#Ui~P!IoOY#aO!]#QO#[#QO#]#QO#^#QO~P!IoOP#ZOY#aOi#OOr!xOs!xOu!yO!]#QO!^!vO!`!wO!f#ZO#V!|O#W!}O#X!}O#Y!}O#Z#PO#[#QO#]#QO#^#QO#`#RO'`QO^#Ui}#Ui#b#Ui#d#Ui#e#Ui'Q#Ui'm#Ui'u#Uiz#Ui!_#Ui'b#Ui!P#Ui${#Ui!X#Ui~O't#Ui~P!LgO't!zO~P!LgOP#ZOY#aOi#OOr!xOs!xOu!yO!]#QO!^!vO!`!wO!f#ZO#V!|O#W!}O#X!}O#Y!}O#Z#PO#[#QO#]#QO#^#QO#`#RO#b#TO'`QO't!zO^#Ui}#Ui#d#Ui#e#Ui'Q#Ui'm#Uiz#Ui!_#Ui'b#Ui!P#Ui${#Ui!X#Ui~O'u#Ui~P# RO'u!{O~P# ROP#ZOY#aOi#OOr!xOs!xOu!yO!]#QO!^!vO!`!wO!f#ZO#V!|O#W!}O#X!}O#Y!}O#Z#PO#[#QO#]#QO#^#QO#`#RO#b#TO#d#VO'`QO't!zO'u!{O~O^#Ui}#Ui#e#Ui'Q#Ui'm#Uiz#Ui!_#Ui'b#Ui!P#Ui${#Ui!X#Ui~P##mOPZXYZXiZXrZXsZXuZX!]ZX!^ZX!`ZX!fZX!wZX#RcX#VZX#WZX#XZX#YZX#ZZX#[ZX#]ZX#^ZX#`ZX#bZX#dZX#eZX#jZX'`ZX'mZX'tZX'uZX}ZX!OZX~O#hZX~P#&QOP#ZOY9dOi9XOr!xOs!xOu!yO!]9ZO!^!vO!`!wO!f#ZO#V9VO#W9WO#X9WO#Y9WO#Z9YO#[9ZO#]9ZO#^9ZO#`9[O#b9^O#d9`O#e9aO'`QO'm#XO't!zO'u!{O~O#h,^O~P#([OP'eXY'eXi'eXr'eXs'eXu'eX!]'eX!^'eX!`'eX!f'eX#V'eX#W'eX#X'eX#Y'eX#Z'eX#['eX#^'eX#`'eX#b'eX#d'eX#e'eX'`'eX'm'eX't'eX'u'eX}'eX~O!w9eO#j9eO#]'eX#h'eX!O'eX~P#*VO^&la}&la'Q&la!_&la'b&laz&la!P&la${&la!X&la~P!(wOP#UiY#Ui^#Uii#Uis#Ui}#Ui!]#Ui!^#Ui!`#Ui!f#Ui#V#Ui#W#Ui#X#Ui#Y#Ui#Z#Ui#[#Ui#]#Ui#^#Ui#`#Ui#b#Ui#d#Ui#e#Ui'Q#Ui'`#Uiz#Ui!_#Ui'b#Ui!P#Ui${#Ui!X#Ui~P!#TO^#ii}#ii'Q#iiz#ii!_#ii'b#ii!P#ii${#ii!X#ii~P!(wO#u,`O~O#u,aO~O!X'fO!w,bO!P#yX#r#yX#u#yX#|#yX~O|,cO~O!P'iO#r,eO#u'hO#|,fO~O}9bO!O'dX~P#([O!O,gO~O#|,iO~O&}'xO'O'wO'P,lO~O],oOj,oOz,pO~O}cX!XcX!_cX!_$`X'mcX~P! zO!_,vO~P!#TO},wO!X!tO'm&hO!_'zX~O!_,|O~Oz$`X}$`X!X$gX~P! zO}-OOz'{X~P!#TO!X-QO~Oz-SO~O|(YO'V$]O!_'zP~Oi-WO!X!tO!`$UO'[$`O'm&hO~O!X)YO~O!O-^O~P!%jO!T-_O!U-_O'W$_O'c(bO~Ou-aO'c(bO~O!t-bO~O'V$wO}&qX'Z&qX~O}(rO'Z']a~Or-gOs-gOu-hO'moa'toa'uoa}oa!woa~O'Zoa#hoa~P#5ZOr'|Ou'}O'm$Xa't$Xa'u$Xa}$Xa!w$Xa~O'Z$Xa#h$Xa~P#6POr'|Ou'}O'm$Za't$Za'u$Za}$Za!w$Za~O'Z$Za#h$Za~P#6rO]-iO~O#R-jO~O'Z$ia}$ia#h$ia!w$ia~P!#TO#R-mO~OR-vO!P&]O!k-uO${-tO~O'Z-wO~O]#nOi#oOj#nOk#nOn#|Op9fOu#uO!P#vO!Z:hO!`#sO#Q9lO#o$QO$Y9hO$[9jO$_$RO'`#pO~Og-yO'V-xO~P#8iO!X)YO!P'Ya^'Ya'Q'Ya~O#R.PO~OYZX}cX!OcX~O}.QO!O(SX~O!O.SO~OY.TO~O'V)bO~O!P$hO'V$]O[&yX}&yX~O})gO[(Ra~O!_.YO~P!(wO].[O~OY.]O~O[.^O~OR-vO!P&]O!k-uO${-tO'[$`O~O})sO^(Oa'Q(Oa~O!w.dO~OR.gO!P#vO~O'c&|O!O(PP~OR.qO!P.mO!k.pO${.oO'[$`O~OY.{O}.yO!O(QX~O!O.|O~O[/OO^$XO'Q$XO~O]/PO~O#]/RO%m/SO~P0nO!w#bO#]/RO%m/SO~O^/TO~P)uO^/VO~O%v/ZOP%tiQ%tiW%ti]%ti^%tia%tib%tig%tii%tij%tik%tin%tip%tiu%tiw%tix%tiy%ti!P%ti!Z%ti!`%ti!c%ti!d%ti!e%ti!f%ti!g%ti!j%ti#_%ti#o%ti#s%ti$z%ti$|%ti%O%ti%P%ti%S%ti%U%ti%X%ti%Y%ti%[%ti%i%ti%o%ti%q%ti%s%ti%u%ti%x%ti&O%ti&S%ti&U%ti&W%ti&Y%ti&[%ti&{%ti'V%ti'`%ti'y%ti!O%ti_%ti%{%ti~O_/aO!O/_O%{/`O~P`O!PSO!`/dO~O}#_O'b$Wa~Oz&bi}&bi~P!(wO}!ZOz'gi~O}&YOz'qi~Oz/hO~O}!Ra!O!Ra~P#([O]%{Oj%{O|/nO'c(bO}&cX!O&cX~P?xO}+TO!O'ha~O]&TOj&TO|)rO'c&|O}&hX!O&hX~O}+WO!O'sa~Oz'ri}'ri~P!(wO^$XO!X!tO!`$UO!f/yO!w/wO'Q$XO'[$`O'm&hO~O!O/|O~P!>QO!T/}O!U/}O'W$_O'c(bO'l+`O~O!S0OO~P#F`O!S0OO!q0QO!t0RO~P#F`O!S0OO!o0SO!p0SO!q0QO!t0RO~P#F`O!P&]O~O!P&]O~P!#TO}'oi!_'oi^'oi'Q'oi~P!(wO!w0]O}'oi!_'oi^'oi'Q'oi~O}&mO!_'ni~Ou$qO!P$rO#Q0_O'V$]O~O#RoaPoaYoa^oaioa!]oa!^oa!`oa!foa#Voa#Woa#Xoa#Yoa#Zoa#[oa#]oa#^oa#`oa#boa#doa#eoa'Qoa'`oa!_oazoa!Poa'boa${oa!Xoa~P#5ZO#R$XaP$XaY$Xa^$Xai$Xas$Xa!]$Xa!^$Xa!`$Xa!f$Xa#V$Xa#W$Xa#X$Xa#Y$Xa#Z$Xa#[$Xa#]$Xa#^$Xa#`$Xa#b$Xa#d$Xa#e$Xa'Q$Xa'`$Xa!_$Xaz$Xa!P$Xa'b$Xa${$Xa!X$Xa~P#6PO#R$ZaP$ZaY$Za^$Zai$Zas$Za!]$Za!^$Za!`$Za!f$Za#V$Za#W$Za#X$Za#Y$Za#Z$Za#[$Za#]$Za#^$Za#`$Za#b$Za#d$Za#e$Za'Q$Za'`$Za!_$Zaz$Za!P$Za'b$Za${$Za!X$Za~P#6rO#R$iaP$iaY$ia^$iai$ias$ia}$ia!]$ia!^$ia!`$ia!f$ia#V$ia#W$ia#X$ia#Y$ia#Z$ia#[$ia#]$ia#^$ia#`$ia#b$ia#d$ia#e$ia'Q$ia'`$ia!_$iaz$ia!P$ia!w$ia'b$ia${$ia!X$ia~P!#TO^!yq}!yq'Q!yqz!yq!_!yq'b!yq!P!yq${!yq!X!yq~P!(wO}&dX'Z&dX~PIxO},TO'Z'ja~O|0gO}&eX!_&eX~P)uO},WO!_'ka~O},WO!_'ka~P!(wO#h!ba!O!ba~PBzO#h!Ya}!Ya!O!Ya~P#([O!P0zO#s]O#z0{O~O!O1PO~O'b1QO~P!#TO^$Tq}$Tq'Q$Tqz$Tq!_$Tq'b$Tq!P$Tq${$Tq!X$Tq~P!(wOz1RO~O],oOj,oO~Or'|Ou'}O'u(RO'm$si't$si}$si!w$si~O'Z$si#h$si~P$&|Or'|Ou'}O'm$ui't$ui'u$ui}$ui!w$ui~O'Z$ui#h$ui~P$'oO#h1SO~P!#TO|1UO'V$]O}&mX!_&mX~O},wO!_'za~O},wO!X!tO!_'za~O},wO!X!tO'm&hO!_'za~O'Z$bi}$bi#h$bi!w$bi~P!#TO|1]O'V(]Oz&oX}&oX~P!#rO}-OOz'{a~O}-OOz'{a~P!#TO!X!tO~O!X!tO#]1gO~Oi1kO!X!tO'm&hO~O}'^i'Z'^i~P!#TO!w1nO}'^i'Z'^i~P!#TO!_1qO~O^$Uq}$Uq'Q$Uqz$Uq!_$Uq'b$Uq!P$Uq${$Uq!X$Uq~P!(wO}1uO!P'|X~P!#TO!P&]O${1xO~O!P&]O${1xO~P!#TO!P$`X$pZX^$`X'Q$`X~P! zO$p1|OrfXufX!PfX'mfX'tfX'ufX^fX'QfX~O$p1|O~O$|2TO'V)bO}&xX!O&xX~O}.QO!O(Sa~OY2XO~O[2YO~O]2]O~OR2_O!P&]O!k2^O${1xO~O^$XO'Q$XO~P!#TO!P#vO~P!#TO}2dO!w2fO!O(PX~O!O2gO~Ou(fO!S2pO!T2iO!U2iO!n2oO!o2nO!p2nO!t2mO'W$_O'c(bO'l+`O~O!O2lO~P$/}OR2wO!P.mO!k2vO${2uO~OR2wO!P.mO!k2vO${2uO'[$`O~O'V(tO}&wX!O&wX~O}.yO!O(Qa~O'c3QO~O]3SO~O[3UO~O!_3XO~P)uO^3ZO~O^3ZO~P)uO#]3]O%m3^O~PEdO_/aO!O3bO%{/`O~P`O!X3dO~O&Q3eOP%}qQ%}qW%}q]%}q^%}qa%}qb%}qg%}qi%}qj%}qk%}qn%}qp%}qu%}qw%}qx%}qy%}q!P%}q!Z%}q!`%}q!c%}q!d%}q!e%}q!f%}q!g%}q!j%}q#_%}q#o%}q#s%}q$z%}q$|%}q%O%}q%P%}q%S%}q%U%}q%X%}q%Y%}q%[%}q%i%}q%o%}q%q%}q%s%}q%u%}q%x%}q&O%}q&S%}q&U%}q&W%}q&Y%}q&[%}q&{%}q'V%}q'`%}q'y%}q!O%}q%v%}q_%}q%{%}q~O}#Oi!O#Oi~P#([O!w3gO}#Oi!O#Oi~O}!Ri!O!Ri~P#([O^$XO!w3nO'Q$XO~O^$XO!X!tO!w3nO'Q$XO~O!T3rO!U3rO'W$_O'c(bO'l+`O~O^$XO!X!tO!`$UO!f3sO!w3nO'Q$XO'[$`O'm&hO~O!S3tO~P$8dO!S3tO!q3wO!t3xO~P$8dO^$XO!X!tO!f3sO!w3nO'Q$XO'm&hO~O}'oq!_'oq^'oq'Q'oq~P!(wO}&mO!_'nq~O#R$siP$siY$si^$sii$sis$si!]$si!^$si!`$si!f$si#V$si#W$si#X$si#Y$si#Z$si#[$si#]$si#^$si#`$si#b$si#d$si#e$si'Q$si'`$si!_$siz$si!P$si'b$si${$si!X$si~P$&|O#R$uiP$uiY$ui^$uii$uis$ui!]$ui!^$ui!`$ui!f$ui#V$ui#W$ui#X$ui#Y$ui#Z$ui#[$ui#]$ui#^$ui#`$ui#b$ui#d$ui#e$ui'Q$ui'`$ui!_$uiz$ui!P$ui'b$ui${$ui!X$ui~P$'oO#R$biP$biY$bi^$bii$bis$bi}$bi!]$bi!^$bi!`$bi!f$bi#V$bi#W$bi#X$bi#Y$bi#Z$bi#[$bi#]$bi#^$bi#`$bi#b$bi#d$bi#e$bi'Q$bi'`$bi!_$biz$bi!P$bi!w$bi'b$bi${$bi!X$bi~P!#TO}&da'Z&da~P!#TO}&ea!_&ea~P!(wO},WO!_'ki~O#h!yi}!yi!O!yi~P#([OP#ZOr!xOs!xOu!yO!^!vO!`!wO!f#ZO'`QOY#Uii#Ui!]#Ui#W#Ui#X#Ui#Y#Ui#Z#Ui#[#Ui#]#Ui#^#Ui#`#Ui#b#Ui#d#Ui#e#Ui#h#Ui'm#Ui't#Ui'u#Ui}#Ui!O#Ui~O#V#Ui~P$AzO#V9VO~P$AzOP#ZOr!xOs!xOu!yO!^!vO!`!wO!f#ZO#V9VO#W9WO#X9WO#Y9WO'`QOY#Ui!]#Ui#Z#Ui#[#Ui#]#Ui#^#Ui#`#Ui#b#Ui#d#Ui#e#Ui#h#Ui'm#Ui't#Ui'u#Ui}#Ui!O#Ui~Oi#Ui~P$DSOi9XO~P$DSOP#ZOi9XOr!xOs!xOu!yO!^!vO!`!wO!f#ZO#V9VO#W9WO#X9WO#Y9WO#Z9YO'`QO#`#Ui#b#Ui#d#Ui#e#Ui#h#Ui'm#Ui't#Ui'u#Ui}#Ui!O#Ui~OY#Ui!]#Ui#[#Ui#]#Ui#^#Ui~P$F[OY9dO!]9ZO#[9ZO#]9ZO#^9ZO~P$F[OP#ZOY9dOi9XOr!xOs!xOu!yO!]9ZO!^!vO!`!wO!f#ZO#V9VO#W9WO#X9WO#Y9WO#Z9YO#[9ZO#]9ZO#^9ZO#`9[O'`QO#b#Ui#d#Ui#e#Ui#h#Ui'm#Ui'u#Ui}#Ui!O#Ui~O't#Ui~P$HpO't!zO~P$HpOP#ZOY9dOi9XOr!xOs!xOu!yO!]9ZO!^!vO!`!wO!f#ZO#V9VO#W9WO#X9WO#Y9WO#Z9YO#[9ZO#]9ZO#^9ZO#`9[O#b9^O'`QO't!zO#d#Ui#e#Ui#h#Ui'm#Ui}#Ui!O#Ui~O'u#Ui~P$JxO'u!{O~P$JxOP#ZOY9dOi9XOr!xOs!xOu!yO!]9ZO!^!vO!`!wO!f#ZO#V9VO#W9WO#X9WO#Y9WO#Z9YO#[9ZO#]9ZO#^9ZO#`9[O#b9^O#d9`O'`QO't!zO'u!{O~O#e#Ui#h#Ui'm#Ui}#Ui!O#Ui~P$MQO^#fy}#fy'Q#fyz#fy!_#fy'b#fy!P#fy${#fy!X#fy~P!(wOP#UiY#Uii#Uis#Ui!]#Ui!^#Ui!`#Ui!f#Ui#V#Ui#W#Ui#X#Ui#Y#Ui#Z#Ui#[#Ui#]#Ui#^#Ui#`#Ui#b#Ui#d#Ui#e#Ui#h#Ui'`#Ui}#Ui!O#Ui~P!#TO!^!vOP'_XY'_Xi'_Xr'_Xs'_Xu'_X!]'_X!`'_X!f'_X#V'_X#W'_X#X'_X#Y'_X#Z'_X#['_X#]'_X#^'_X#`'_X#b'_X#d'_X#e'_X#h'_X'`'_X'm'_X't'_X'u'_X}'_X!O'_X~O#h#ii}#ii!O#ii~P#([O!O4YO~O}&la!O&la~P#([O!X!tO'm&hO}&ma!_&ma~O},wO!_'zi~O},wO!X!tO!_'zi~Oz&oa}&oa~P!#TO!X4aO~O}-OOz'{i~P!#TO}-OOz'{i~Oz4gO~O!X!tO#]4mO~Oi4nO!X!tO'm&hO~Oz4pO~O'Z$dq}$dq#h$dq!w$dq~P!#TO^$Uy}$Uy'Q$Uyz$Uy!_$Uy'b$Uy!P$Uy${$Uy!X$Uy~P!(wO}1uO!P'|a~O!P&]O${4uO~O!P&]O${4uO~P!#TO^!yy}!yy'Q!yyz!yy!_!yy'b!yy!P!yy${!yy!X!yy~P!(wOY4xO~O}.QO!O(Si~O]4}O~O[5OO~O'c&|O}&tX!O&tX~O}2dO!O(Pa~O!O5]O~P$/}Ou-aO'c(bO'l+`O~O!S5`O!T5_O!U5_O!t0RO'W$_O'c(bO'l+`O~O!o5aO!p5aO~P%+jO!T5_O!U5_O'W$_O'c(bO'l+`O~O!P.mO~O!P.mO${5cO~O!P.mO${5cO~P!#TOR5hO!P.mO!k5gO${5cO~OY5mO}&wa!O&wa~O}.yO!O(Qi~O]5pO~O!_5qO~O!_5rO~O!_5sO~O!_5sO~P)uO^5uO~O!X5xO~O!_5zO~O}'ri!O'ri~P#([O^$XO'Q$XO~P!(wO^$XO!w6PO'Q$XO~O^$XO!X!tO!w6PO'Q$XO~O!T6UO!U6UO'W$_O'c(bO'l+`O~O^$XO!X!tO!f6VO!w6PO'Q$XO'm&hO~O!`$UO'[$`O~P%0UO!S6WO~P%/sO}'oy!_'oy^'oy'Q'oy~P!(wO#R$dqP$dqY$dq^$dqi$dqs$dq}$dq!]$dq!^$dq!`$dq!f$dq#V$dq#W$dq#X$dq#Y$dq#Z$dq#[$dq#]$dq#^$dq#`$dq#b$dq#d$dq#e$dq'Q$dq'`$dq!_$dqz$dq!P$dq!w$dq'b$dq${$dq!X$dq~P!#TO}&ei!_&ei~P!(wO#h!yq}!yq!O!yq~P#([Or-gOs-gOu-hOPoaYoaioa!]oa!^oa!`oa!foa#Voa#Woa#Xoa#Yoa#Zoa#[oa#]oa#^oa#`oa#boa#doa#eoa#hoa'`oa'moa'toa'uoa}oa!Ooa~Or'|Ou'}OP$XaY$Xai$Xas$Xa!]$Xa!^$Xa!`$Xa!f$Xa#V$Xa#W$Xa#X$Xa#Y$Xa#Z$Xa#[$Xa#]$Xa#^$Xa#`$Xa#b$Xa#d$Xa#e$Xa#h$Xa'`$Xa'm$Xa't$Xa'u$Xa}$Xa!O$Xa~Or'|Ou'}OP$ZaY$Zai$Zas$Za!]$Za!^$Za!`$Za!f$Za#V$Za#W$Za#X$Za#Y$Za#Z$Za#[$Za#]$Za#^$Za#`$Za#b$Za#d$Za#e$Za#h$Za'`$Za'm$Za't$Za'u$Za}$Za!O$Za~OP$iaY$iai$ias$ia!]$ia!^$ia!`$ia!f$ia#V$ia#W$ia#X$ia#Y$ia#Z$ia#[$ia#]$ia#^$ia#`$ia#b$ia#d$ia#e$ia#h$ia'`$ia}$ia!O$ia~P!#TO#h$Tq}$Tq!O$Tq~P#([O#h$Uq}$Uq!O$Uq~P#([O!O6bO~O'Z$wy}$wy#h$wy!w$wy~P!#TO!X!tO}&mi!_&mi~O!X!tO'm&hO}&mi!_&mi~O},wO!_'zq~Oz&oi}&oi~P!#TO}-OOz'{q~Oz6iO~P!#TOz6iO~O}'^y'Z'^y~P!#TO}&ra!P&ra~P!#TO!P$oq^$oq'Q$oq~P!#TOY6qO~O}.QO!O(Sq~O]6tO~O!P&]O${6uO~O!P&]O${6uO~P!#TO!w6vO}&ta!O&ta~O}2dO!O(Pi~P#([O!T6|O!U6|O'W$_O'c(bO'l+`O~O!S7OO!t3xO~P%?sO!P.mO${7RO~O!P.mO${7RO~P!#TO'c7XO~O}.yO!O(Qq~O!_7[O~O!_7[O~P)uO!_7^O~O!_7_O~O}#Oy!O#Oy~P#([O^$XO!w7eO'Q$XO~O^$XO!X!tO!w7eO'Q$XO~O!T7hO!U7hO'W$_O'c(bO'l+`O~O^$XO!X!tO!f7iO!w7eO'Q$XO'm&hO~O#R$wyP$wyY$wy^$wyi$wys$wy}$wy!]$wy!^$wy!`$wy!f$wy#V$wy#W$wy#X$wy#Y$wy#Z$wy#[$wy#]$wy#^$wy#`$wy#b$wy#d$wy#e$wy'Q$wy'`$wy!_$wyz$wy!P$wy!w$wy'b$wy${$wy!X$wy~P!#TO#h#fy}#fy!O#fy~P#([OP$biY$bii$bis$bi!]$bi!^$bi!`$bi!f$bi#V$bi#W$bi#X$bi#Y$bi#Z$bi#[$bi#]$bi#^$bi#`$bi#b$bi#d$bi#e$bi#h$bi'`$bi}$bi!O$bi~P!#TOr'|Ou'}O'u(ROP$siY$sii$sis$si!]$si!^$si!`$si!f$si#V$si#W$si#X$si#Y$si#Z$si#[$si#]$si#^$si#`$si#b$si#d$si#e$si#h$si'`$si'm$si't$si}$si!O$si~Or'|Ou'}OP$uiY$uii$uis$ui!]$ui!^$ui!`$ui!f$ui#V$ui#W$ui#X$ui#Y$ui#Z$ui#[$ui#]$ui#^$ui#`$ui#b$ui#d$ui#e$ui#h$ui'`$ui'm$ui't$ui'u$ui}$ui!O$ui~O#h$Uy}$Uy!O$Uy~P#([O#h!yy}!yy!O!yy~P#([O!X!tO}&mq!_&mq~O},wO!_'zy~Oz&oq}&oq~P!#TOz7oO~P!#TO}.QO!O(Sy~O}2dO!O(Pq~O!T7{O!U7{O'W$_O'c(bO'l+`O~O!P.mO${8OO~O!P.mO${8OO~P!#TO!_8RO~O&Q8SOP%}!ZQ%}!ZW%}!Z]%}!Z^%}!Za%}!Zb%}!Zg%}!Zi%}!Zj%}!Zk%}!Zn%}!Zp%}!Zu%}!Zw%}!Zx%}!Zy%}!Z!P%}!Z!Z%}!Z!`%}!Z!c%}!Z!d%}!Z!e%}!Z!f%}!Z!g%}!Z!j%}!Z#_%}!Z#o%}!Z#s%}!Z$z%}!Z$|%}!Z%O%}!Z%P%}!Z%S%}!Z%U%}!Z%X%}!Z%Y%}!Z%[%}!Z%i%}!Z%o%}!Z%q%}!Z%s%}!Z%u%}!Z%x%}!Z&O%}!Z&S%}!Z&U%}!Z&W%}!Z&Y%}!Z&[%}!Z&{%}!Z'V%}!Z'`%}!Z'y%}!Z!O%}!Z%v%}!Z_%}!Z%{%}!Z~O^$XO!w8XO'Q$XO~O^$XO!X!tO!w8XO'Q$XO~OP$dqY$dqi$dqs$dq!]$dq!^$dq!`$dq!f$dq#V$dq#W$dq#X$dq#Y$dq#Z$dq#[$dq#]$dq#^$dq#`$dq#b$dq#d$dq#e$dq#h$dq'`$dq}$dq!O$dq~P!#TO}&tq!O&tq~P#([O^$XO!w8nO'Q$XO~OP$wyY$wyi$wys$wy!]$wy!^$wy!`$wy!f$wy#V$wy#W$wy#X$wy#Y$wy#Z$wy#[$wy#]$wy#^$wy#`$wy#b$wy#d$wy#e$wy#h$wy'`$wy}$wy!O$wy~P!#TO'b'dX~P.^O'bZXzZX!_ZX%mZX!PZX${ZX!XZX~P$wO!XcX!_ZX!_cX'mcX~P;OOP9POQ9PO]bOa:fOb!gOgbOi9POjbOkbOn9POp9POuROwbOxbOybO!PSO!Z9RO!`UO!c9PO!d9PO!e9PO!f9PO!g9PO!j!fO#o!iO#s]O'V']O'`QO'y:dO~O}9bO!O$Wa~O]#nOg#{Oi#oOj#nOk#nOn#|Op9gOu#uO!P#vO!Z:iO!`#sO#Q9mO#o$QO$Y9iO$[9kO$_$RO'V&tO'`#pO~O#_'dO~P&*|O!OZX!OcX~P;OO#R9UO~O!X!tO#R9UO~O!w9eO~O!w9nO}'rX!O'rX~O!w9eO}'pX!O'pX~O#R9oO~O'Z9qO~P!#TO#R9vO~O#R9wO~O!X!tO#R9xO~O!X!tO#R9oO~O#h9yO~P#([O#R9zO~O#R9{O~O#R9|O~O#R9}O~O#h:OO~P!#TO#h:PO~P!#TO#s~!^!n!p!q#P#Q'y$Y$[$_$p$z${$|%S%U%X%Y%[%^~TS#s'y#Wy'S'T#u'S'V'c~",
-  goto: "#Ar(WPPPPPPP(XP(iP*[PPPP-qPP.W3h5[5oP5oPPP5o5oP5oP7]PP7bP7vPPPP<VPPPP<V>uPPP>{AVP<VPCmPPPPEe<VPPPPPG^<VPPJ]KYPPPPK^LuPL}NOP<V<V!#V!&O!*o!*o!-|PPP!.T!0w<VPPPPPPPPPP!0zP!2]PP<V!3jP<VP<V<V<V<VP<V!5}PP!8tP!;g!;o!;s!;sP!8qP!;w!;wP!>jP!>n<V<V!>t!Af5oP5oP5o5oP!Bi5o5o!Da5o!Fc5o!HT5o5o!Hq!Jk!Jk!Jo!Jk!JwP!JkP5o!Ks5o!L}5o5o-qPPP!N[PP!Nt!NtP!NtP# Z!NtPP# aP# WP# W# sLy# W#!b#!h#!k(X#!n(XP#!u#!u#!uP(XP(XP(XP(XPP(XP#!{##OP##O(XPPP(XP(XP(XP(XP(XP(X(X##S##^##d##j##x#$O#$U#$`#$f#$p#$v#%U#%[#%b#%p#&V#'i#'w#'}#(T#(Z#(a#(k#(q#(w#)R#)e#)kPPPPPPPPP#)qPP#*e#.cPP#/y#0Q#0YP#4fPP#4j#6}#<w#<{#=O#=R#=^#=aPP#=d#=h#>V#>z#?O#?bPP#?f#?l#?pP#?s#?w#?z#@j#AQ#AV#AY#A]#Ac#Af#Aj#AnmgOSi{!k$W%_%b%c%e*h*m/Z/^Q$elQ$lnQ%VwS&P!`+TQ&d!gS(e#v(jQ)`$fQ)m$nQ*X%PQ+Z&WS+b&]+dQ+s&eQ-_(lQ.x*YW/}+f+g+h+iS2i.m2kU3r0O0Q0SU5_2n2o2pS6U3t3wS6|5`5aQ7h6WR7{7O$lZORSTUij{!Q!U!Z!^!k!s!w!y!|!}#O#P#Q#R#S#T#U#V#W#_#b$W$j%W%Z%_%a%b%c%e%i%t%|&X&_&i&v&z'{(})U*d*h*m+n+u,W,^-h-m-u.P.p/R/S/T/V/Z/^/`/w0]0g2^2v3Z3]3^3n5g5u6P7e8X8n!j'_#Y#h&Q'q*|+P,c/n0z2f3g6v9P9R9U9V9W9X9Y9Z9[9]9^9_9`9a9b9e9n9o9q9x9y9|9}:gQ(u#}Q)e$hQ*Z%SQ*b%[Q+}9fQ-z)YQ.V)fQ/Q*`Q2S.QQ3O.yQ4R9gR4z2TpdOSiw{!k$W%U%_%b%c%e*h*m/Z/^R*]%W&WVOSTijm{!Q!U!Z!h!k!s!w!y!|!}#O#P#Q#R#S#T#U#V#W#Y#_#b#h$W$j%W%Z%[%_%a%b%c%e%i%t%|&X&_&i&v&z'q'{(})U*d*h*m*|+P+n+u,W,^,c-h-m-u.P.p/R/S/T/V/Z/^/`/n/w0]0g0z2^2f2v3Z3]3^3g3n5g5u6P6v7e8X8n9P9R9U9V9W9X9Y9Z9[9]9^9_9`9a9b9e9n9o9q9x9y9|9}:f:gW!aRU!^&QQ$^kQ$dlS$in$nv$spq!o!r$U$q&Y&m&p)q)r)s*f*}+^+x+z/d0_Q${uQ&a!fQ&c!gS(X#s(cS)_$e$fQ)c$hQ)p$pQ*S$}Q*W%PS+r&d&eQ,{(YQ.O)`Q.U)fQ.W)gQ.Z)kQ.s*TS.w*X*YQ0Z+sQ1T,wQ2R.QQ2V.TQ2[.]Q2}.xQ4^1UQ4y2TQ4|2XQ6p4xR7r6q!Y$bl!g$d$e$f&O&c&d&e(d)_)`+Q+a+r+s-X.O/s/z0P0Z1j3q3v6S7f8YQ)W$^Q)x$xQ){$yQ*V%PQ._)pQ.r*SU.v*W*X*YQ2x.sS2|.w.xQ5Y2hQ5l2}S6z5Z5^S7y6{6}Q8d7zR8s8eW#y`$`(r:dS$xr%UQ$ysQ$ztR)v$v$V#x`!t!v#a#s#u$O$P$T&`'w(Q(S(T([(`(p(q)T)V)Y)w)z+o,T-O-Q-j-t-v.d.g.o.q1S1]1g1n1u1x1|2_2u2w4a4m4u5c5h6u7R8O9d9h9i9j9k9l9m9r9s9t9u9v9w9z9{:O:P:d:j:kV(v#}9f9gU&T!`$r+WQ'O!xQ)j$kQ.h)|Q1o-gR5U2d&YbORSTUij{!Q!U!Z!^!k!s!w!y!|!}#O#P#Q#R#S#T#U#V#W#Y#_#b#h$W$j%W%Z%[%_%a%b%c%e%i%t%|&Q&X&_&i&v&z'q'{(})U*d*h*m*|+P+n+u,W,^,c-h-m-u.P.p/R/S/T/V/Z/^/`/n/w0]0g0z2^2f2v3Z3]3^3g3n5g5u6P6v7e8X8n9P9R9U9V9W9X9Y9Z9[9]9^9_9`9a9b9e9n9o9q9x9y9|9}:g$]#^Y!]!l$[%s%w&r&y'Q'R'S'T'U'V'W'X'Y'Z'['^'a'e'o)i*x+R+[+t,S,Y,],_,m-k/i/l0[0f0j0k0l0m0n0o0p0q0r0s0t0u0v0y1O1s2P3i3l3|4P4Q4V4W5W5{6O6[6`6a7b7u8V8l8w9Q:]&ZbORSTUij{!Q!U!Z!^!k!s!w!y!|!}#O#P#Q#R#S#T#U#V#W#Y#_#b#h$W$j%W%Z%[%_%a%b%c%e%i%t%|&Q&X&_&i&v&z'q'{(})U*d*h*m*|+P+n+u,W,^,c-h-m-u.P.p/R/S/T/V/Z/^/`/n/w0]0g0z2^2f2v3Z3]3^3g3n5g5u6P6v7e8X8n9P9R9U9V9W9X9Y9Z9[9]9^9_9`9a9b9e9n9o9q9x9y9|9}:gQ&R!`R/o+TY%{!`&P&W+T+ZS(d#v(jS+a&]+dS-X(e(lQ-Y(fQ-`(mQ.j*OU/z+b+f+gS0P+h+iS0T+j2mQ1j-_Q1l-aQ1m-bS2h.m2kU3q/}0O0QQ3u0RQ3v0SS5Z2i2pS5^2n2oU6S3r3t3wQ6X3xS6{5_5`Q6}5aS7f6U6WS7z6|7OQ8Y7hR8e7{lgOSi{!k$W%_%b%c%e*h*m/Z/^Q%g!OS&q!s9UQ)]$cQ*Q${Q*R$|Q+p&bS,R&v9oS-l(}9xQ-|)^Q.l*PQ/b*oQ/c*pQ/k+OQ0X+qS1t-m9|Q1}-}S2Q.P9}Q3h/mQ3k/uQ3z0YQ4w2OQ5y3eQ5|3jQ6Q3pQ6Y3{Q7`5zQ7c6RQ8U7dQ8i8SQ8k8WR8v8m$W#]Y!]!l%s%w&r&y'Q'R'S'T'U'V'W'X'Y'Z'['^'a'e'o)i*x+R+[+t,S,Y,],m-k/i/l0[0f0j0k0l0m0n0o0p0q0r0s0t0u0v0y1O1s2P3i3l3|4P4Q4V4W5W5{6O6[6`6a7b7u8V8l8w9Q:]U(o#w&u0xT)R$[,_$W#[Y!]!l%s%w&r&y'Q'R'S'T'U'V'W'X'Y'Z'['^'a'e'o)i*x+R+[+t,S,Y,],m-k/i/l0[0f0j0k0l0m0n0o0p0q0r0s0t0u0v0y1O1s2P3i3l3|4P4Q4V4W5W5{6O6[6`6a7b7u8V8l8w9Q:]Q'`#]S)Q$[,_R-n)R&YbORSTUij{!Q!U!Z!^!k!s!w!y!|!}#O#P#Q#R#S#T#U#V#W#Y#_#b#h$W$j%W%Z%[%_%a%b%c%e%i%t%|&Q&X&_&i&v&z'q'{(})U*d*h*m*|+P+n+u,W,^,c-h-m-u.P.p/R/S/T/V/Z/^/`/n/w0]0g0z2^2f2v3Z3]3^3g3n5g5u6P6v7e8X8n9P9R9U9V9W9X9Y9Z9[9]9^9_9`9a9b9e9n9o9q9x9y9|9}:gQ%byQ%czQ%e|Q%f}R/Y*kQ&^!fQ)S$^Q+m&aS-s)W)pS0U+k+lW1w-p-q-r._S3y0V0WU4t1y1z1{U6n4s5Q5RQ7q6oR8`7tT+c&]+dS+a&]+dU/z+b+f+gS0P+h+iS0T+j2mS2h.m2kU3q/}0O0QQ3u0RQ3v0SS5Z2i2pS5^2n2oU6S3r3t3wQ6X3xS6{5_5`Q6}5aS7f6U6WS7z6|7OQ8Y7hR8e7{S+c&]+dT2j.m2kS&k!n/WQ,z(XQ-V(dS/y+a2hQ1Y,{S1d-W-`U3s0P0T5^Q4]1TS4k1k1mU6V3u3v6}Q6d4^Q6m4nR7i6XQ!uXS&j!n/WQ)O$VQ)Z$aQ)a$gQ+v&kQ,y(XQ-U(dQ-Z(gQ-{)[Q.t*US/x+a2hS1X,z,{S1c-V-`Q1f-YQ1i-[Q2z.uW3o/y0P0T5^Q4[1TQ4`1YS4e1d1mQ4l1lQ5j2{W6T3s3u3v6}S6c4]4^Q6h4gQ6k4kQ6x5XQ7V5kS7g6V6XQ7k6dQ7m6iQ7p6mQ7w6yQ8Q7WQ8Z7iQ8^7oQ8b7xQ8q8cQ8y8rQ8}8zQ:V:RQ:`:ZR:a:[$nWORSTUij{!Q!U!Z!^!k!s!w!y!|!}#O#P#Q#R#S#T#U#V#W#_#b$W$j%W%Z%[%_%a%b%c%e%i%t%|&X&_&i&v&z'{(})U*d*h*m+n+u,W,^-h-m-u.P.p/R/S/T/V/Z/^/`/w0]0g2^2v3Z3]3^3n5g5u6P7e8X8nS!um!h!j:Q#Y#h&Q'q*|+P,c/n0z2f3g6v9P9R9U9V9W9X9Y9Z9[9]9^9_9`9a9b9e9n9o9q9x9y9|9}:gR:V:f$nXORSTUij{!Q!U!Z!^!k!s!w!y!|!}#O#P#Q#R#S#T#U#V#W#_#b$W$j%W%Z%[%_%a%b%c%e%i%t%|&X&_&i&v&z'{(})U*d*h*m+n+u,W,^-h-m-u.P.p/R/S/T/V/Z/^/`/w0]0g2^2v3Z3]3^3n5g5u6P7e8X8nQ$Va!Y$al!g$d$e$f&O&c&d&e(d)_)`+Q+a+r+s-X.O/s/z0P0Z1j3q3v6S7f8YS$gm!hQ)[$bQ*U%PW.u*V*W*X*YU2{.v.w.xQ5X2hS5k2|2}U6y5Y5Z5^Q7W5lU7x6z6{6}S8c7y7zS8r8d8eQ8z8s!j:R#Y#h&Q'q*|+P,c/n0z2f3g6v9P9R9U9V9W9X9Y9Z9[9]9^9_9`9a9b9e9n9o9q9x9y9|9}:gQ:Z:eR:[:f$f[OSTij{!Q!U!Z!k!s!w!y!|!}#O#P#Q#R#S#T#U#V#W#_#b$W$j%W%Z%_%a%b%c%e%i%t%|&X&_&i&v&z'{(})U*d*h*m+n+u,W,^-h-m-u.P.p/R/S/T/V/Z/^/`/w0]0g2^2v3Z3]3^3n5g5u6P7e8X8nU!eRU!^v$spq!o!r$U$q&Y&m&p)q)r)s*f*}+^+x+z/d0_Q*c%[!h:S#Y#h'q*|+P,c/n0z2f3g6v9P9R9U9V9W9X9Y9Z9[9]9^9_9`9a9b9e9n9o9q9x9y9|9}:gR:U&QS&U!`$rR/q+W$lZORSTUij{!Q!U!Z!^!k!s!w!y!|!}#O#P#Q#R#S#T#U#V#W#_#b$W$j%W%Z%_%a%b%c%e%i%t%|&X&_&i&v&z'{(})U*d*h*m+n+u,W,^-h-m-u.P.p/R/S/T/V/Z/^/`/w0]0g2^2v3Z3]3^3n5g5u6P7e8X8n!j'_#Y#h&Q'q*|+P,c/n0z2f3g6v9P9R9U9V9W9X9Y9Z9[9]9^9_9`9a9b9e9n9o9q9x9y9|9}:gR*b%[R'O!x!h#SY!]$[%s%w&r&y'X'Y'Z'['a'e)i*x+[+t,S,Y,m-k0[0f0v1s2P3l3|4P6O7b8V8l8w9Q!R9]'^'o+R,_/i/l0j0r0s0t0u0y1O3i4Q4V4W5W5{6[6`6a7u:]!d#UY!]$[%s%w&r&y'Z'['a'e)i*x+[+t,S,Y,m-k0[0f0v1s2P3l3|4P6O7b8V8l8w9Q}9_'^'o+R,_/i/l0j0t0u0y1O3i4Q4V4W5W5{6[6`6a7u:]!`#YY!]$[%s%w&r&y'a'e)i*x+[+t,S,Y,m-k0[0f0v1s2P3l3|4P6O7b8V8l8w9Ql(T#q&w(|,u,}-c-d0d1r4Z4o:W:b:cx:g'^'o+R,_/i/l0j0y1O3i4Q4V4W5W5{6[6`6a7u:]!`:j&s'c(W(^+l,Q,j-R-o-r.c.e0W0c1Z1_1{2a2c2s4O4b4h4q4v5R5f6Z6f6l7TZ:k0w4U6]7j8[&YbORSTUij{!Q!U!Z!^!k!s!w!y!|!}#O#P#Q#R#S#T#U#V#W#Y#_#b#h$W$j%W%Z%[%_%a%b%c%e%i%t%|&Q&X&_&i&v&z'q'{(})U*d*h*m*|+P+n+u,W,^,c-h-m-u.P.p/R/S/T/V/Z/^/`/n/w0]0g0z2^2f2v3Z3]3^3g3n5g5u6P6v7e8X8n9P9R9U9V9W9X9Y9Z9[9]9^9_9`9a9b9e9n9o9q9x9y9|9}:gS#i_#jR0{,b&a^ORSTU_ij{!Q!U!Z!^!k!s!w!y!|!}#O#P#Q#R#S#T#U#V#W#Y#_#b#h#j$W$j%W%Z%[%_%a%b%c%e%i%t%|&Q&X&_&i&v&z'q'{(})U*d*h*m*|+P+n+u,W,^,b,c-h-m-u.P.p/R/S/T/V/Z/^/`/n/w0]0g0z2^2f2v3Z3]3^3g3n5g5u6P6v7e8X8n9P9R9U9V9W9X9Y9Z9[9]9^9_9`9a9b9e9n9o9q9x9y9|9}:gS#d]#kT'h#f'lT#e]#kT'j#f'l&a_ORSTU_ij{!Q!U!Z!^!k!s!w!y!|!}#O#P#Q#R#S#T#U#V#W#Y#_#b#h#j$W$j%W%Z%[%_%a%b%c%e%i%t%|&Q&X&_&i&v&z'q'{(})U*d*h*m*|+P+n+u,W,^,b,c-h-m-u.P.p/R/S/T/V/Z/^/`/n/w0]0g0z2^2f2v3Z3]3^3g3n5g5u6P6v7e8X8n9P9R9U9V9W9X9Y9Z9[9]9^9_9`9a9b9e9n9o9q9x9y9|9}:gT#i_#jQ#l_R's#j$naORSTUij{!Q!U!Z!^!k!s!w!y!|!}#O#P#Q#R#S#T#U#V#W#_#b$W$j%W%Z%[%_%a%b%c%e%i%t%|&X&_&i&v&z'{(})U*d*h*m+n+u,W,^-h-m-u.P.p/R/S/T/V/Z/^/`/w0]0g2^2v3Z3]3^3n5g5u6P7e8X8n!k:e#Y#h&Q'q*|+P,c/n0z2f3g6v9P9R9U9V9W9X9Y9Z9[9]9^9_9`9a9b9e9n9o9q9x9y9|9}:g#RcOSUi{!Q!U!k!y#h$W%W%Z%[%_%a%b%c%e%i%|&_'q)U*d*h*m+n,c-h-u.p/R/S/T/V/Z/^/`0z2^2v3Z3]3^5g5ut#w`!v$O$P$T(Q(S(T([(p(q,T-j1S1n:d:j:k!|&u!t#a#s#u&`'w(`)T)V)Y)w)z+o-O-Q-t-v.d.g.o.q1]1g1u1x1|2_2u2w4a4m4u5c5h6u7R8O9h9j9l9r9t9v9z:OQ(z$RQ,n'|c0x9d9i9k9m9s9u9w9{:Pt#t`!v$O$P$T(Q(S(T([(p(q,T-j1S1n:d:j:kS(g#v(jQ({$SQ-[(h!|:X!t#a#s#u&`'w(`)T)V)Y)w)z+o-O-Q-t-v.d.g.o.q1]1g1u1x1|2_2u2w4a4m4u5c5h6u7R8O9h9j9l9r9t9v9z:Ob:Y9d9i9k9m9s9u9w9{:PQ:^:hR:_:it#w`!v$O$P$T(Q(S(T([(p(q,T-j1S1n:d:j:k!|&u!t#a#s#u&`'w(`)T)V)Y)w)z+o-O-Q-t-v.d.g.o.q1]1g1u1x1|2_2u2w4a4m4u5c5h6u7R8O9h9j9l9r9t9v9z:Oc0x9d9i9k9m9s9u9w9{:PleOSi{!k$W%_%b%c%e*h*m/Z/^Q(_#uQ*t%lQ*u%nR1[-O$U#x`!t!v#a#s#u$O$P$T&`'w(Q(S(T([(`(p(q)T)V)Y)w)z+o,T-O-Q-j-t-v.d.g.o.q1S1]1g1n1u1x1|2_2u2w4a4m4u5c5h6u7R8O9d9h9i9j9k9l9m9r9s9t9u9v9w9z9{:O:P:d:j:kQ)y$yQ.f){Q2b.eR5T2cT(i#v(jS(i#v(jT2j.m2kQ)Z$aQ-Z(gQ-{)[Q.t*UQ2z.uQ5j2{Q6x5XQ7V5kQ7w6yQ8Q7WQ8b7xQ8q8cQ8y8rR8}8zl(Q#q&w(|,u,}-c-d0d1r4Z4o:W:b:c!`9r&s'c(W(^+l,Q,j-R-o-r.c.e0W0c1Z1_1{2a2c2s4O4b4h4q4v5R5f6Z6f6l7TZ9s0w4U6]7j8[n(S#q&w(|,s,u,}-c-d0d1r4Z4o:W:b:c!b9t&s'c(W(^+l,Q,j-R-o-r.c.e0W0a0c1Z1_1{2a2c2s4O4b4h4q4v5R5f6Z6f6l7T]9u0w4U6]6^7j8[pdOSiw{!k$W%U%_%b%c%e*h*m/Z/^Q%RvR*d%[pdOSiw{!k$W%U%_%b%c%e*h*m/Z/^R%RvQ)}$zR.b)vqdOSiw{!k$W%U%_%b%c%e*h*m/Z/^Q.n*SS2t.r.sW5b2q2r2s2xU7Q5d5e5fU7|7P7S7TQ8f7}R8t8gQ%YwR*^%UR3R.{R7Y5mS$in$nR.W)gQ%_xR*h%`R*n%fT/[*m/^QiOQ!kST$Zi!kQ'y#pR,k'yQ!WQR%q!WQ![RU%u![%v*yQ%v!]R*y%wQ+U&RR/p+UQ,U&wR0e,UQ,X&yS0h,X0iR0i,YQ+d&]R/{+dQ&Z!cQ*z%xT+_&Z*zQ+X&UR/r+XQ&n!pQ+w&lU+{&n+w0`R0`+|Q'l#fR,d'lQ#j_R'r#jQ#`YU'b#`*w9cQ*w9QR9c'oQ,x(XW1V,x1W4_6eU1W,y,z,{S4_1X1YR6e4`#q(O#q&s&w'c(W(^(w(x(|+l,O,P,Q,j,s,t,u,}-R-c-d-o-r.c.e0W0a0b0c0d0w1Z1_1r1{2a2c2s4O4S4T4U4Z4b4h4o4q4v5R5f6Z6]6^6_6f6l7T7j8[:W:b:cQ-P(^U1^-P1`4cQ1`-RR4c1_Q(j#vR-](jQ(s#zR-f(sQ1v-oR4r1vQ)t$tR.a)tQ2e.hS5V2e6wR6w5WQ*P${R.k*PQ2k.mR5[2kQ.z*ZS3P.z5nR5n3RQ.R)cW2U.R2W4{6rQ2W.UQ4{2VR6r4|Q)h$iR.X)hQ/^*mR3a/^WhOSi!kQ%d{Q)P$WQ*g%_Q*i%bQ*j%cQ*l%eQ/X*hS/[*m/^R3`/ZQ$YfQ%h!PQ%k!RQ%m!SQ%o!TQ)o$oQ)u$uQ*]%YQ*r%jS.}*^*aQ/e*qQ/f*tQ/g*uS/v+a2hQ1a-TQ1b-UQ1h-ZQ2Z.[Q2`.cQ2y.tQ3T/PQ3_/YY3m/x/y0P0T5^Q4d1cQ4f1eQ4i1iQ5P2]Q5S2aQ5i2zQ5o3S[5}3l3o3s3u3v6}Q6g4eQ6j4jQ6s4}Q7U5jQ7Z5pW7a6O6T6V6XQ7l6hQ7n6kQ7s6tQ7v6xQ8P7VU8T7b7g7iQ8]7mQ8_7pQ8a7wQ8h8QS8j8V8ZQ8o8^Q8p8bQ8u8lQ8x8qQ8{8wQ8|8yR9O8}Q$clQ&b!gU)^$d$e$fQ+O&OU+q&c&d&eQ-T(dS-})_)`Q/m+QQ/u+aS0Y+r+sQ1e-XQ2O.OQ3j/sS3p/z0PQ3{0ZQ4j1jS6R3q3vQ7d6SQ8W7fR8m8YS#r`:dR)X$`U#z`$`:dR-e(rQ#q`S&s!t)YQ&w!vQ'c#aQ(W#sQ(^#uQ(w$OQ(x$PQ(|$TQ+l&`Q,O9hQ,P9jQ,Q9lQ,j'wQ,s(QQ,t(SQ,u(TQ,}([Q-R(`Q-c(pQ-d(qd-o)T-t.o1x2u4u5c6u7R8OQ-r)VQ.c)wQ.e)zQ0W+oQ0a9rQ0b9tQ0c9vQ0d,TQ0w9dQ1Z-OQ1_-QQ1r-jQ1{-vQ2a.dQ2c.gQ2s.qQ4O9zQ4S9iQ4T9kQ4U9mQ4Z1SQ4b1]Q4h1gQ4o1nQ4q1uQ4v1|Q5R2_Q5f2wQ6Z:OQ6]9wQ6^9sQ6_9uQ6f4aQ6l4mQ7T5hQ7j9{Q8[:PQ:W:dQ:b:jR:c:kT'x#p'ylfOSi{!k$W%_%b%c%e*h*m/Z/^S!mU%aQ%j!QQ%p!UQ'P!yQ'p#hS*a%W%ZQ*e%[Q*q%iQ*{%|Q+k&_Q,h'qQ-q)UQ/U*dQ0V+nQ0},cQ1p-hQ1z-uQ2r.pQ3V/RQ3W/SQ3Y/TQ3[/VQ3c/`Q4X0zQ5Q2^Q5e2vQ5t3ZQ5v3]Q5w3^Q7S5gR7]5u!vYOSUi{!Q!k!y$W%W%Z%[%_%a%b%c%e%i%|&_)U*d*h*m+n-h-u.p/R/S/T/V/Z/^/`2^2v3Z3]3^5g5uQ!]RQ!lTQ$[jQ%s!ZQ%w!^Q&r!sQ&y!wQ'Q!|Q'R!}Q'S#OQ'T#PQ'U#QQ'V#RQ'W#SQ'X#TQ'Y#UQ'Z#VQ'[#WQ'^#YQ'a#_Q'e#bW'o#h'q,c0zQ)i$jQ*x%tS+R&Q/nQ+[&XQ+t&iQ,S&vQ,Y&zQ,]9PQ,_9RQ,m'{Q-k(}Q/i*|Q/l+PQ0[+uQ0f,WQ0j9UQ0k9VQ0l9WQ0m9XQ0n9YQ0o9ZQ0p9[Q0q9]Q0r9^Q0s9_Q0t9`Q0u9aQ0v,^Q0y9eQ1O9bQ1s-mQ2P.PQ3i9nQ3l/wQ3|0]Q4P0gQ4Q9oQ4V9qQ4W9xQ5W2fQ5{3gQ6O3nQ6[9yQ6`9|Q6a9}Q7b6PQ7u6vQ8V7eQ8l8XQ8w8nQ9Q!UR:]:gT!VQ!WR!_RR&S!`S&O!`+TS+Q&P&WR/s+ZR&x!vR&{!wT!qU$US!pU$UU$tpq*fS&l!o!rQ+y&mQ+|&pQ.`)sS0^+x+zR3}0_[!bR!^$q&Y)q+^h!nUpq!o!r$U&m&p)s+x+z0_Q/W*fQ/j*}Q3f/dT:T&Q)rT!dR$qS!cR$qS%x!^)qS+S&Q)rQ+]&YR/t+^T&V!`$rQ#f]R'u#kT'k#f'lR0|,bT(Z#s(cR(a#uQ-p)TQ1y-tQ2q.oQ4s1xQ5d2uQ6o4uQ7P5cQ7t6uQ7}7RR8g8OlgOSi{!k$W%_%b%c%e*h*m/Z/^Q%XwR*]%UV$upq*fR.i)|R*[%SQ$mnR)n$nR)d$hT%]x%`T%^x%`T/]*m/^",
-  nodeNames: "⚠ ArithOp ArithOp extends LineComment BlockComment Script ExportDeclaration export Star as VariableName from String ; default FunctionDeclaration async function VariableDefinition TypeParamList TypeDefinition ThisType this LiteralType ArithOp Number BooleanLiteral TemplateType VoidType void TypeofType typeof MemberExpression . ?. PropertyName [ TemplateString null super RegExp ] ArrayExpression Spread , } { ObjectExpression Property async get set PropertyDefinition Block : NewExpression new TypeArgList CompareOp < ) ( ArgList UnaryExpression await yield delete LogicOp BitOp ParenthesizedExpression ClassExpression class extends ClassBody MethodDeclaration Privacy static abstract override PrivatePropertyDefinition PropertyDeclaration readonly Optional TypeAnnotation Equals FunctionExpression ArrowFunction ParamList ParamList ArrayPattern ObjectPattern PatternProperty Privacy readonly Arrow MemberExpression PrivatePropertyName BinaryExpression ArithOp ArithOp ArithOp ArithOp BitOp CompareOp in instanceof const CompareOp BitOp BitOp BitOp LogicOp LogicOp ConditionalExpression LogicOp LogicOp AssignmentExpression UpdateOp PostfixExpression CallExpression TaggedTemplatExpression DynamicImport import ImportMeta JSXElement JSXSelfCloseEndTag JSXStartTag JSXSelfClosingTag JSXIdentifier JSXNamespacedName JSXMemberExpression JSXSpreadAttribute JSXAttribute JSXAttributeValue JSXEscape JSXEndTag JSXOpenTag JSXFragmentTag JSXText JSXEscape JSXStartCloseTag JSXCloseTag PrefixCast ArrowFunction TypeParamList SequenceExpression KeyofType keyof UniqueType unique ImportType InferredType infer TypeName ParenthesizedType FunctionSignature ParamList NewSignature IndexedType TupleType Label ArrayType ReadonlyType ObjectType MethodType PropertyType IndexSignature CallSignature TypePredicate is NewSignature new UnionType LogicOp IntersectionType LogicOp ConditionalType ParameterizedType ClassDeclaration abstract implements type VariableDeclaration let var TypeAliasDeclaration InterfaceDeclaration interface EnumDeclaration enum EnumBody NamespaceDeclaration namespace module AmbientDeclaration declare GlobalDeclaration global ClassDeclaration ClassBody MethodDeclaration AmbientFunctionDeclaration ExportGroup VariableName VariableName ImportDeclaration ImportGroup ForStatement for ForSpec ForInSpec ForOfSpec of WhileStatement while WithStatement with DoStatement do IfStatement if else SwitchStatement switch SwitchBody CaseLabel case DefaultLabel TryStatement try catch finally ReturnStatement return ThrowStatement throw BreakStatement break ContinueStatement continue DebuggerStatement debugger LabeledStatement ExpressionStatement",
-  maxTerm: 329,
+  states: "$1WO`QYOOO'QQ!LdO'#CgO'XOSO'#DSO)dQYO'#DXO)tQYO'#DdO){QYO'#DnO-xQYO'#DtOOQO'#EX'#EXO.]QWO'#EWO.bQWO'#EWOOQ!LS'#Eb'#EbO0aQ!LdO'#IqO2wQ!LdO'#IrO3eQWO'#EvO3jQpO'#F]OOQ!LS'#FO'#FOO3rO!bO'#FOO4QQWO'#FdO5_QWO'#FcOOQ!LS'#Ir'#IrOOQ!LQ'#Iq'#IqOOQQ'#J['#J[O5dQWO'#HjO5iQ!LYO'#HkOOQQ'#Ic'#IcOOQQ'#Hl'#HlQ`QYOOO){QYO'#DfO5qQWO'#GWO5vQ#tO'#ClO6UQWO'#EVO6aQWO'#EcO6fQ#tO'#E}O7QQWO'#GWO7VQWO'#G[O7bQWO'#G[O7pQWO'#G_O7pQWO'#G`O7pQWO'#GbO5qQWO'#GeO8aQWO'#GhO9oQWO'#CcO:PQWO'#GuO:XQWO'#G{O:XQWO'#G}O`QYO'#HPO:XQWO'#HRO:XQWO'#HUO:^QWO'#H[O:cQ!LZO'#H`O){QYO'#HbO:nQ!LZO'#HdO:yQ!LZO'#HfO5iQ!LYO'#HhO){QYO'#IsOOOS'#Hn'#HnO;UOSO,59nOOQ!LS,59n,59nO=gQbO'#CgO=qQYO'#HoO>OQWO'#ItO?}QbO'#ItO'dQYO'#ItO@UQWO,59sO@lQ&jO'#D^OAeQWO'#EXOArQWO'#JPOA}QWO'#JOOBVQWO,5:uOB[QWO'#I}OBcQWO'#DuO5vQ#tO'#EVOBqQWO'#EVOB|Q`O'#E}OOQ!LS,5:O,5:OOCUQYO,5:OOESQ!LdO,5:YOEpQWO,5:`OFZQ!LYO'#I|O7VQWO'#I{OFbQWO'#I{OFjQWO,5:tOFoQWO'#I{OF}QYO,5:rOH}QWO'#ESOJXQWO,5:rOKhQWO'#DhOKoQYO'#DmOKyQ&jO,5:{O){QYO,5:{OOQQ'#En'#EnOOQQ'#Ep'#EpO){QYO,5:}O){QYO,5:}O){QYO,5:}O){QYO,5:}O){QYO,5:}O){QYO,5:}O){QYO,5:}O){QYO,5:}O){QYO,5:}O){QYO,5:}O){QYO,5:}OOQQ'#Et'#EtOLRQYO,5;_OOQ!LS,5;d,5;dOOQ!LS,5;e,5;eONRQWO,5;eOOQ!LS,5;f,5;fO){QYO'#HyONWQ!LYO,5<PONrQWO,5:}O){QYO,5;bO! [QpO'#JTONyQpO'#JTO! cQpO'#JTO! tQpO,5;mOOOO,5;w,5;wO!!SQYO'#F_OOOO'#Hx'#HxO3rO!bO,5;jO!!ZQpO'#FaOOQ!LS,5;j,5;jO!!wQ,UO'#CqOOQ!LS'#Ct'#CtO!#[QWO'#CtO!#aOSO'#CxO!#}Q#tO,5;|O!$UQWO,5<OO!%bQWO'#FnO!%oQWO'#FoO!%tQWO'#FsO!&vQ&jO'#FwO!'iQ,UO'#IlOOQ!LS'#Il'#IlO!'sQWO'#IkO!(RQWO'#IjOOQ!LS'#Cr'#CrOOQ!LS'#Cy'#CyO!(ZQWO'#C{OJ^QWO'#FfOJ^QWO'#FhO!(`QWO'#FjO!(eQWO'#FkO!(jQWO'#FqOJ^QWO'#FvO!(oQWO'#EYO!)WQWO,5;}O`QYO,5>UOOQQ'#If'#IfOOQQ,5>V,5>VOOQQ-E;j-E;jO!+SQ!LdO,5:QOOQ!LQ'#Co'#CoO!+sQ#tO,5<rOOQO'#Ce'#CeO!,UQWO'#CpO!,^Q!LYO'#IgO5_QWO'#IgO:^QWO,59WO!,lQpO,59WO!,tQ#tO,59WO5vQ#tO,59WO!-PQWO,5:rO!-XQWO'#GtO!-dQWO'#J`O){QYO,5;gO!-lQ&jO,5;iO!-qQWO,5=_O!-vQWO,5=_O!-{QWO,5=_O5iQ!LYO,5=_O5qQWO,5<rO!.ZQWO'#EZO!.lQ&jO'#E[OOQ!LQ'#I}'#I}O!.}Q!LYO'#J]O5iQ!LYO,5<vO7pQWO,5<|OOQO'#Cq'#CqO!/YQpO,5<yO!/bQ#tO,5<zO!/mQWO,5<|O!/rQ`O,5=PO:^QWO'#GjO5qQWO'#GlO!/zQWO'#GlO5vQ#tO'#GoO!0PQWO'#GoOOQQ,5=S,5=SO!0UQWO'#GpO!0^QWO'#ClO!0cQWO,58}O!0mQWO,58}O!2oQYO,58}OOQQ,58},58}O!2|Q!LYO,58}O){QYO,58}O!3XQYO'#GwOOQQ'#Gx'#GxOOQQ'#Gy'#GyO`QYO,5=aO!3iQWO,5=aO){QYO'#DtO`QYO,5=gO`QYO,5=iO!3nQWO,5=kO`QYO,5=mO!3sQWO,5=pO!3xQYO,5=vOOQQ,5=z,5=zO){QYO,5=zO5iQ!LYO,5=|OOQQ,5>O,5>OO!7yQWO,5>OOOQQ,5>Q,5>QO!7yQWO,5>QOOQQ,5>S,5>SO!8OQ`O,5?_OOOS-E;l-E;lOOQ!LS1G/Y1G/YO!8TQbO,5>ZO){QYO,5>ZOOQO-E;m-E;mO!8_QWO,5?`O!8gQbO,5?`O!8nQWO,5?jOOQ!LS1G/_1G/_O!8vQpO'#DQOOQO'#Iv'#IvO){QYO'#IvO!9eQpO'#IvO!:SQpO'#D_O!:eQ&jO'#D_O!<pQYO'#D_O!<wQWO'#IuO!=PQWO,59xO!=UQWO'#E]O!=dQWO'#JQO!=lQWO,5:vO!>SQ&jO'#D_O){QYO,5?kO!>^QWO'#HtO!8nQWO,5?jOOQ!LQ1G0a1G0aO!?jQ&jO'#DxOOQ!LS,5:a,5:aO){QYO,5:aOH}QWO,5:aO!?qQWO,5:aO:^QWO,5:qO!,lQpO,5:qO!,tQ#tO,5:qO5vQ#tO,5:qOOQ!LS1G/j1G/jOOQ!LS1G/z1G/zOOQ!LQ'#ER'#ERO){QYO,5?hO!?|Q!LYO,5?hO!@_Q!LYO,5?hO!@fQWO,5?gO!@nQWO'#HvO!@fQWO,5?gOOQ!LQ1G0`1G0`O7VQWO,5?gOOQ!LS1G0^1G0^O!AYQ!LdO1G0^O!AyQ!LbO,5:nOOQ!LS'#Fm'#FmO!BgQ!LdO'#IlOF}QYO1G0^O!DfQ#tO'#IwO!DpQWO,5:SO!DuQbO'#IxO){QYO'#IxO!EPQWO,5:XOOQ!LS'#DQ'#DQOOQ!LS1G0g1G0gO!EUQWO1G0gO!GgQ!LdO1G0iO!GnQ!LdO1G0iO!JRQ!LdO1G0iO!JYQ!LdO1G0iO!LaQ!LdO1G0iO!LtQ!LdO1G0iO# eQ!LdO1G0iO# lQ!LdO1G0iO#$PQ!LdO1G0iO#$WQ!LdO1G0iO#%{Q!LdO1G0iO#(uQ7^O'#CgO#*pQ7^O1G0yO#,kQ7^O'#IrOOQ!LS1G1P1G1PO#-OQ!LdO,5>eOOQ!LQ-E;w-E;wO#-oQ!LdO1G0iOOQ!LS1G0i1G0iO#/qQ!LdO1G0|O#0bQpO,5;oO#0gQpO,5;pO#0lQpO'#FWO#1QQWO'#FVOOQO'#JU'#JUOOQO'#Hw'#HwO#1VQpO1G1XOOQ!LS1G1X1G1XOOOO1G1b1G1bO#1eQ7^O'#IqO#1oQWO,5;yOLRQYO,5;yOOOO-E;v-E;vOOQ!LS1G1U1G1UOOQ!LS,5;{,5;{O#1tQpO,5;{OOQ!LS,59`,59`OH}QWO'#InOOOS'#Hm'#HmO#1yOSO,59dOOQ!LS,59d,59dO){QYO1G1hO!(eQWO'#H{O#2UQWO,5<aOOQ!LS,5<^,5<^OOQO'#GR'#GROJ^QWO,5<lOOQO'#GT'#GTOJ^QWO,5<nOJ^QWO,5<pOOQO1G1j1G1jO#2aQ`O'#CoO#2tQ`O,5<YO#2{QWO'#JXO5qQWO'#JXO#3ZQWO,5<[OJ^QWO,5<ZO#3`Q`O'#FmO#3mQ`O'#JYO#3wQWO'#JYOH}QWO'#JYO#3|QWO,5<_OOQ!LQ'#Dc'#DcO#4RQWO'#FpO#4^QpO'#FxO!&qQ&jO'#FxO!&qQ&jO'#FzO#4oQWO'#F{O!(jQWO'#GOOOQO'#H}'#H}O#4tQ&jO,5<cOOQ!LS,5<c,5<cO#4{Q&jO'#FxO#5ZQ&jO'#FyO#5cQ&jO'#FyOOQ!LS,5<q,5<qOJ^QWO,5?VOJ^QWO,5?VO#5hQWO'#IOO#5sQWO,5?UOOQ!LS'#Cg'#CgO#6gQ#tO,59gOOQ!LS,59g,59gO#7YQ#tO,5<QO#7{Q#tO,5<SO#8VQWO,5<UOOQ!LS,5<V,5<VO#8[QWO,5<]O#8aQ#tO,5<bOF}QYO1G1iO#8qQWO1G1iOOQQ1G3p1G3pOOQ!LS1G/l1G/lONRQWO1G/lOOQQ1G2^1G2^OH}QWO1G2^O){QYO1G2^OH}QWO1G2^O#8vQWO1G2^O#9UQWO,59[O#:_QWO'#ESOOQ!LQ,5?R,5?RO#:iQ!LYO,5?ROOQQ1G.r1G.rO:^QWO1G.rO!,lQpO1G.rO!,tQ#tO1G.rO#:wQWO1G0^O#:|QWO'#CgO#;XQWO'#JaO#;aQWO,5=`O#;fQWO'#JaO#;kQWO'#JaO#;pQWO'#IWO#<OQWO,5?zO#<WQbO1G1ROOQ!LS1G1T1G1TO5qQWO1G2yO#<_QWO1G2yO#<dQWO1G2yO#<iQWO1G2yOOQQ1G2y1G2yO#<nQ#tO1G2^O7VQWO'#JOO7VQWO'#E]O7VQWO'#IQO#=PQ!LYO,5?wOOQQ1G2b1G2bO!/mQWO1G2hOH}QWO1G2eO#=[QWO1G2eOOQQ1G2f1G2fOH}QWO1G2fO#=aQWO1G2fO#=iQ&jO'#GdOOQQ1G2h1G2hO!&qQ&jO'#ISO!/rQ`O1G2kOOQQ1G2k1G2kOOQQ,5=U,5=UO#=qQ#tO,5=WO5qQWO,5=WO#4oQWO,5=ZO5_QWO,5=ZO!,lQpO,5=ZO!,tQ#tO,5=ZO5vQ#tO,5=ZO#>SQWO'#J_O#>_QWO,5=[OOQQ1G.i1G.iO#>dQ!LYO1G.iO#>oQWO1G.iO!(ZQWO1G.iO5iQ!LYO1G.iO#>tQbO,5?|O#?OQWO,5?|O#?ZQYO,5=cO#?bQWO,5=cO7VQWO,5?|OOQQ1G2{1G2{O`QYO1G2{OOQQ1G3R1G3ROOQQ1G3T1G3TO:XQWO1G3VO#?gQYO1G3XO#CbQYO'#HWOOQQ1G3[1G3[O:^QWO1G3bO#CoQWO1G3bO5iQ!LYO1G3fOOQQ1G3h1G3hOOQ!LQ'#Ft'#FtO5iQ!LYO1G3jO5iQ!LYO1G3lOOOS1G4y1G4yO#CwQ`O,5<PO#DPQbO1G3uO#DZQWO1G4zO#DcQWO1G5UO#DkQWO,5?bOLRQYO,5:wO7VQWO,5:wO:^QWO,59yOLRQYO,59yO!,lQpO,59yO#DpQ7^O,59yOOQO,5:w,5:wO#DzQ&jO'#HpO#EbQWO,5?aOOQ!LS1G/d1G/dO#EjQ&jO'#HuO#FOQWO,5?lOOQ!LQ1G0b1G0bO!:eQ&jO,59yO#FWQbO1G5VOOQO,5>`,5>`O7VQWO,5>`OOQO-E;r-E;rOOQ!LQ'#EO'#EOO#FbQ!LrO'#EPO!?bQ&jO'#DyOOQO'#Hs'#HsO#F|Q&jO,5:dOOQ!LS,5:d,5:dO#GTQ&jO'#DyO#GfQ&jO'#DyO#GmQ&jO'#EUO#GpQ&jO'#EPO#G}Q&jO'#EPO!?bQ&jO'#EPO#HbQWO1G/{O#HgQ`O1G/{OOQ!LS1G/{1G/{O){QYO1G/{OH}QWO1G/{OOQ!LS1G0]1G0]O:^QWO1G0]O!,lQpO1G0]O!,tQ#tO1G0]O#HnQ!LdO1G5SO){QYO1G5SO#IOQ!LYO1G5SO#IaQWO1G5RO7VQWO,5>bOOQO,5>b,5>bO#IiQWO,5>bOOQO-E;t-E;tO#IaQWO1G5RO#IwQ!LdO,59gO#KvQ!LdO,5<QO#MxQ!LdO,5<SO$ zQ!LdO,5<bOOQ!LS7+%x7+%xO$$SQ!LdO7+%xO$$sQWO'#HqO$$}QWO,5?cOOQ!LS1G/n1G/nO$%VQYO'#HrO$%dQWO,5?dO$%lQbO,5?dOOQ!LS1G/s1G/sOOQ!LS7+&R7+&RO$%vQ7^O,5:YO){QYO7+&eO$&QQ7^O,5:QOOQO1G1Z1G1ZOOQO1G1[1G1[O$&_QMhO,5;rOLRQYO,5;qOOQO-E;u-E;uOOQ!LS7+&s7+&sOOOO7+&|7+&|OOOO1G1e1G1eO$&jQWO1G1eOOQ!LS1G1g1G1gO$&oQ`O,5?YOOOS-E;k-E;kOOQ!LS1G/O1G/OO$&vQ!LdO7+'SOOQ!LS,5>g,5>gO$'gQWO,5>gOOQ!LS1G1{1G1{P$'lQWO'#H{POQ!LS-E;y-E;yO$(]Q#tO1G2WO$)OQ#tO1G2YO$)YQ#tO1G2[OOQ!LS1G1t1G1tO$)aQWO'#HzO$)oQWO,5?sO$)oQWO,5?sO$)wQWO,5?sO$*SQWO,5?sOOQO1G1v1G1vO$*bQ#tO1G1uO$*rQWO'#H|O$+SQWO,5?tOH}QWO,5?tO$+[Q`O,5?tOOQ!LS1G1y1G1yO5iQ!LYO,5<dO5iQ!LYO,5<eO$+fQWO,5<eO#4jQWO,5<eO!,lQpO,5<dO$+kQWO,5<fO5iQ!LYO,5<gO$+fQWO,5<jOOQO-E;{-E;{OOQ!LS1G1}1G1}O!&qQ&jO,5<dO$+sQWO,5<eO!&qQ&jO,5<fO!&qQ&jO,5<eO$,OQ#tO1G4qO$,YQ#tO1G4qOOQO,5>j,5>jOOQO-E;|-E;|O!-lQ&jO,59iO){QYO,59iO$,gQWO1G1pOJ^QWO1G1wO$,lQ!LdO7+'TOOQ!LS7+'T7+'TOF}QYO7+'TOOQ!LS7+%W7+%WO$-]Q`O'#JZO#HbQWO7+'xO$-gQWO7+'xO$-oQ`O7+'xOOQQ7+'x7+'xOH}QWO7+'xO){QYO7+'xOH}QWO7+'xOOQO1G.v1G.vO$-yQ!LbO'#CgO$.ZQ!LbO,5<hO$.xQWO,5<hOOQ!LQ1G4m1G4mOOQQ7+$^7+$^O:^QWO7+$^O!,lQpO7+$^OF}QYO7+%xO$.}QWO'#IVO$/]QWO,5?{OOQO1G2z1G2zO5qQWO,5?{O$/]QWO,5?{O$/eQWO,5?{OOQO,5>r,5>rOOQO-E<U-E<UOOQ!LS7+&m7+&mO$/jQWO7+(eO5iQ!LYO7+(eO5qQWO7+(eO$/oQWO7+(eO$/tQWO7+'xOOQ!LQ,5>l,5>lOOQ!LQ-E<O-E<OOOQQ7+(S7+(SO$0SQ!LbO7+(POH}QWO7+(PO$0^Q`O7+(QOOQQ7+(Q7+(QOH}QWO7+(QO$0eQWO'#J^O$0pQWO,5=OOOQO,5>n,5>nOOQO-E<Q-E<QOOQQ7+(V7+(VO$1jQ&jO'#GmOOQQ1G2r1G2rOH}QWO1G2rO){QYO1G2rOH}QWO1G2rO$1qQWO1G2rO$2PQ#tO1G2rO5iQ!LYO1G2uO#4oQWO1G2uO5_QWO1G2uO!,lQpO1G2uO!,tQ#tO1G2uO$2bQWO'#IUO$2mQWO,5?yO$2uQ&jO,5?yOOQ!LQ1G2v1G2vOOQQ7+$T7+$TO$2zQWO7+$TO5iQ!LYO7+$TO$3PQWO7+$TO){QYO1G5hO){QYO1G5iO$3UQYO1G2}O$3]QWO1G2}O$3bQYO1G2}O$3iQ!LYO1G5hOOQQ7+(g7+(gO5iQ!LYO7+(qO`QYO7+(sOOQQ'#Jd'#JdOOQQ'#IX'#IXO$3sQYO,5=rOOQQ,5=r,5=rO){QYO'#HXO$4QQWO'#HZOOQQ7+(|7+(|O$4VQYO7+(|O7VQWO7+(|OOQQ7+)Q7+)QOOQQ7+)U7+)UOOQQ7+)W7+)WOOQO1G4|1G4|O$8TQ7^O1G0cO$8_QWO1G0cOOQO1G/e1G/eO$8jQ7^O1G/eO:^QWO1G/eOLRQYO'#D_OOQO,5>[,5>[OOQO-E;n-E;nOOQO,5>a,5>aOOQO-E;s-E;sO!,lQpO1G/eOOQO1G3z1G3zO:^QWO,5:eOOQO,5:k,5:kO){QYO,5:kO$8tQ!LYO,5:kO$9PQ!LYO,5:kO!,lQpO,5:eOOQO-E;q-E;qOOQ!LS1G0O1G0OO!?bQ&jO,5:eO$9_Q&jO,5:eO$9pQ!LrO,5:kO$:[Q&jO,5:eO!?bQ&jO,5:kOOQO,5:p,5:pO$:cQ&jO,5:kO$:pQ!LYO,5:kOOQ!LS7+%g7+%gO#HbQWO7+%gO#HgQ`O7+%gOOQ!LS7+%w7+%wO:^QWO7+%wO!,lQpO7+%wO$;UQ!LdO7+*nO){QYO7+*nOOQO1G3|1G3|O7VQWO1G3|O$;fQWO7+*mO$;nQ!LdO1G2WO$=pQ!LdO1G2YO$?rQ!LdO1G1uO$AzQ#tO,5>]OOQO-E;o-E;oO$BUQbO,5>^O){QYO,5>^OOQO-E;p-E;pO$B`QWO1G5OO$BhQ7^O1G0^O$DoQ7^O1G0iO$DvQ7^O1G0iO$FwQ7^O1G0iO$GOQ7^O1G0iO$HsQ7^O1G0iO$IWQ7^O1G0iO$KeQ7^O1G0iO$KlQ7^O1G0iO$MmQ7^O1G0iO$MtQ7^O1G0iO% iQ7^O1G0iO% |Q!LdO<<JPO%!mQ7^O1G0iO%$]Q7^O'#IlO%&YQ7^O1G0|OLRQYO'#FYOOQO'#JV'#JVOOQO1G1^1G1^O%&gQWO1G1]O%&lQ7^O,5>eOOOO7+'P7+'POOOS1G4t1G4tOOQ!LS1G4R1G4ROJ^QWO7+'vO%&vQWO,5>fO5qQWO,5>fOOQO-E;x-E;xO%'UQWO1G5_O%'UQWO1G5_O%'^QWO1G5_O%'iQ`O,5>hO%'sQWO,5>hOH}QWO,5>hOOQO-E;z-E;zO%'xQ`O1G5`O%(SQWO1G5`OOQO1G2O1G2OOOQO1G2P1G2PO5iQ!LYO1G2PO$+fQWO1G2PO5iQ!LYO1G2OO%([QWO1G2QOH}QWO1G2QOOQO1G2R1G2RO5iQ!LYO1G2UO!,lQpO1G2OO#4jQWO1G2PO%(aQWO1G2QO%(iQWO1G2POJ^QWO7+*]OOQ!LS1G/T1G/TO%(tQWO1G/TOOQ!LS7+'[7+'[O%(yQ#tO7+'cO%)ZQ!LdO<<JoOOQ!LS<<Jo<<JoOH}QWO'#IPO%)zQWO,5?uOOQQ<<Kd<<KdOH}QWO<<KdO#HbQWO<<KdO%*SQWO<<KdO%*[Q`O<<KdOH}QWO1G2SOOQQ<<Gx<<GxO:^QWO<<GxO%*fQ!LdO<<IdOOQ!LS<<Id<<IdOOQO,5>q,5>qO%+VQWO,5>qO#;kQWO,5>qOOQO-E<T-E<TO%+[QWO1G5gO%+[QWO1G5gO5qQWO1G5gO%+dQWO<<LPOOQQ<<LP<<LPO%+iQWO<<LPO5iQ!LYO<<LPO){QYO<<KdOH}QWO<<KdOOQQ<<Kk<<KkO$0SQ!LbO<<KkOOQQ<<Kl<<KlO$0^Q`O<<KlO%+nQ&jO'#IRO%+yQWO,5?xOLRQYO,5?xOOQQ1G2j1G2jO#FbQ!LrO'#EPO!?bQ&jO'#GnOOQO'#IT'#ITO%,RQ&jO,5=XOOQQ,5=X,5=XO%,YQ&jO'#EPO%,eQ&jO'#EPO%,|Q&jO'#EPO%-WQ&jO'#GnO%-iQWO7+(^O%-nQWO7+(^O%-vQ`O7+(^OOQQ7+(^7+(^OH}QWO7+(^O){QYO7+(^OH}QWO7+(^O%.QQWO7+(^OOQQ7+(a7+(aO5iQ!LYO7+(aO#4oQWO7+(aO5_QWO7+(aO!,lQpO7+(aO%.`QWO,5>pOOQO-E<S-E<SOOQO'#Gq'#GqO%.kQWO1G5eO5iQ!LYO<<GoOOQQ<<Go<<GoO%.sQWO<<GoO%.xQWO7++SO%.}QWO7++TOOQQ7+(i7+(iO%/SQWO7+(iO%/XQYO7+(iO%/`QWO7+(iO){QYO7++SO){QYO7++TOOQQ<<L]<<L]OOQQ<<L_<<L_OOQQ-E<V-E<VOOQQ1G3^1G3^O%/eQWO,5=sOOQQ,5=u,5=uO:^QWO<<LhO%/jQWO<<LhOLRQYO7+%}OOQO7+%P7+%PO%/oQ7^O1G5VO:^QWO7+%POOQO1G0P1G0PO%/yQ!LdO1G0VOOQO1G0V1G0VO){QYO1G0VO%0TQ!LYO1G0VO:^QWO1G0PO!,lQpO1G0PO!?bQ&jO1G0PO%0`Q!LYO1G0VO%0nQ&jO1G0PO%1PQ!LYO1G0VO%1eQ!LrO1G0VO%1oQ&jO1G0PO!?bQ&jO1G0VOOQ!LS<<IR<<IROOQ!LS<<Ic<<IcO:^QWO<<IcO%1vQ!LdO<<NYOOQO7+)h7+)hO%2WQ!LdO7+'cO%4`QbO1G3xO%4jQ7^O7+%xO%4wQ7^O,59gO%6tQ7^O,5<QO%8qQ7^O,5<SO%:nQ7^O,5<bO%<^Q7^O7+'SO%<kQ7^O7+'TO%<xQWO,5;tOOQO7+&w7+&wO%<}Q#tO<<KbOOQO1G4Q1G4QO%=_QWO1G4QO%=jQWO1G4QO%=xQWO7+*yO%=xQWO7+*yOH}QWO1G4SO%>QQ`O1G4SO%>[QWO7+*zOOQO7+'k7+'kO5iQ!LYO7+'kOOQO7+'j7+'jO$+fQWO7+'lO%>dQ`O7+'lOOQO7+'p7+'pO5iQ!LYO7+'jO$+fQWO7+'kO%>kQWO7+'lOH}QWO7+'lO#4jQWO7+'kO%>pQ#tO<<MwOOQ!LS7+$o7+$oO%>zQ`O,5>kOOQO-E;}-E;}O#HbQWOANAOOOQQANAOANAOOH}QWOANAOO%?UQ!LbO7+'nOOQQAN=dAN=dO5qQWO1G4]OOQO1G4]1G4]O%?cQWO1G4]O%?hQWO7++RO%?hQWO7++RO5iQ!LYOANAkO%?pQWOANAkOOQQANAkANAkO%?uQWOANAOO%?}Q`OANAOOOQQANAVANAVOOQQANAWANAWO%@XQWO,5>mOOQO-E<P-E<PO%@dQ7^O1G5dO#4oQWO,5=YO5_QWO,5=YO!,lQpO,5=YOOQO-E<R-E<ROOQQ1G2s1G2sO$9pQ!LrO,5:kO!?bQ&jO,5=YO%@nQ&jO,5=YO%APQ&jO,5:kOOQQ<<Kx<<KxOH}QWO<<KxO%-iQWO<<KxO%AZQWO<<KxO%AcQ`O<<KxO){QYO<<KxOH}QWO<<KxOOQQ<<K{<<K{O5iQ!LYO<<K{O#4oQWO<<K{O5_QWO<<K{O%AmQ&jO1G4[O%ArQWO7++POOQQAN=ZAN=ZO5iQ!LYOAN=ZOOQQ<<Nn<<NnOOQQ<<No<<NoOOQQ<<LT<<LTO%AzQWO<<LTO%BPQYO<<LTO%BWQWO<<NnO%B]QWO<<NoOOQQ1G3_1G3_OOQQANBSANBSO:^QWOANBSO%BbQ7^O<<IiOOQO<<Hk<<HkOOQO7+%q7+%qO%/yQ!LdO7+%qO){QYO7+%qOOQO7+%k7+%kO:^QWO7+%kO!,lQpO7+%kO%BlQ!LYO7+%qO!?bQ&jO7+%kO%BwQ!LYO7+%qO%CVQ&jO7+%kO%ChQ!LYO7+%qOOQ!LSAN>}AN>}O%C|Q!LdO<<KbO%FUQ7^O<<JPO%FcQ7^O1G1uO%HRQ7^O1G2WO%JOQ7^O1G2YO%K{Q7^O<<JoO%LYQ7^O<<IdOOQO1G1`1G1`OOQO7+)l7+)lO%LgQWO7+)lO%LrQWO<<NeO%LzQ`O7+)nOOQO<<KV<<KVO5iQ!LYO<<KWO$+fQWO<<KWOOQO<<KU<<KUO5iQ!LYO<<KVO%MUQ`O<<KWO$+fQWO<<KVOOQQG26jG26jO#HbQWOG26jOOQO7+)w7+)wO5qQWO7+)wO%M]QWO<<NmOOQQG27VG27VO5iQ!LYOG27VOH}QWOG26jOLRQYO1G4XO%MeQWO7++OO5iQ!LYO1G2tO#4oQWO1G2tO5_QWO1G2tO!,lQpO1G2tO!?bQ&jO1G2tO%1eQ!LrO1G0VO%MmQ&jO1G2tO%-iQWOANAdOOQQANAdANAdOH}QWOANAdO%NOQWOANAdO%NWQ`OANAdOOQQANAgANAgO5iQ!LYOANAgO#4oQWOANAgOOQO'#Gr'#GrOOQO7+)v7+)vOOQQG22uG22uOOQQANAoANAoO%NbQWOANAoOOQQANDYANDYOOQQANDZANDZO%NgQYOG27nOOQO<<I]<<I]O%/yQ!LdO<<I]OOQO<<IV<<IVO:^QWO<<IVO){QYO<<I]O!,lQpO<<IVO&$eQ!LYO<<I]O!?bQ&jO<<IVO&$pQ!LYO<<I]O&%OQ7^O7+'cOOQO<<MW<<MWOOQOAN@rAN@rO5iQ!LYOAN@rOOQOAN@qAN@qO$+fQWOAN@rO5iQ!LYOAN@qOOQQLD,ULD,UOOQO<<Mc<<McOOQQLD,qLD,qO#HbQWOLD,UO&&nQ7^O7+)sOOQO7+(`7+(`O5iQ!LYO7+(`O#4oQWO7+(`O5_QWO7+(`O!,lQpO7+(`O!?bQ&jO7+(`OOQQG27OG27OO%-iQWOG27OOH}QWOG27OOOQQG27RG27RO5iQ!LYOG27ROOQQG27ZG27ZO:^QWOLD-YOOQOAN>wAN>wOOQOAN>qAN>qO%/yQ!LdOAN>wO:^QWOAN>qO){QYOAN>wO!,lQpOAN>qO&&xQ!LYOAN>wO&'TQ7^O<<KbOOQOG26^G26^O5iQ!LYOG26^OOQOG26]G26]OOQQ!$( p!$( pOOQO<<Kz<<KzO5iQ!LYO<<KzO#4oQWO<<KzO5_QWO<<KzO!,lQpO<<KzOOQQLD,jLD,jO%-iQWOLD,jOOQQLD,mLD,mOOQQ!$(!t!$(!tOOQOG24cG24cOOQOG24]G24]O%/yQ!LdOG24cO:^QWOG24]O){QYOG24cOOQOLD+xLD+xOOQOANAfANAfO5iQ!LYOANAfO#4oQWOANAfO5_QWOANAfOOQQ!$(!U!$(!UOOQOLD)}LD)}OOQOLD)wLD)wO%/yQ!LdOLD)}OOQOG27QG27QO5iQ!LYOG27QO#4oQWOG27QOOQO!$'Mi!$'MiOOQOLD,lLD,lO5iQ!LYOLD,lOOQO!$(!W!$(!WOLRQYO'#DnO&(sQbO'#IqOLRQYO'#DfO&(zQ!LdO'#CgO&)eQbO'#CgO&)uQYO,5:rOLRQYO,5:}OLRQYO,5:}OLRQYO,5:}OLRQYO,5:}OLRQYO,5:}OLRQYO,5:}OLRQYO,5:}OLRQYO,5:}OLRQYO,5:}OLRQYO,5:}OLRQYO,5:}OLRQYO'#HyO&+uQWO,5<PO&-XQWO,5:}OLRQYO,5;bO!(ZQWO'#C{O!(ZQWO'#C{OH}QWO'#FfO&+}QWO'#FfOH}QWO'#FhO&+}QWO'#FhOH}QWO'#FvO&+}QWO'#FvOLRQYO,5?kO&)uQYO1G0^O&-`Q7^O'#CgOLRQYO1G1hOH}QWO,5<lO&+}QWO,5<lOH}QWO,5<nO&+}QWO,5<nOH}QWO,5<ZO&+}QWO,5<ZO&)uQYO1G1iOLRQYO7+&eOH}QWO1G1wO&+}QWO1G1wO&)uQYO7+'TO&)uQYO7+%xOH}QWO7+'vO&+}QWO7+'vO&-jQWO'#EWO&-oQWO'#EWO&-wQWO'#EvO&-|QWO'#EcO&.RQWO'#JPO&.^QWO'#I}O&.iQWO,5:rO&.nQ#tO,5;|O&.uQWO'#FoO&.zQWO'#FoO&/PQWO,5;}O&/XQWO,5:rO&/aQ7^O1G0yO&/hQWO,5<]O&/mQWO,5<]O&/rQWO1G1iO&/wQWO1G0^O&/|Q#tO1G2[O&0TQ#tO1G2[O4QQWO'#FdO5_QWO'#FcOBqQWO'#EVOLRQYO,5;_O!(jQWO'#FqO!(jQWO'#FqOJ^QWO,5<pOJ^QWO,5<p",
+  stateData: "&1Q~O'TOS'UOSSOSTOS~OPTOQTOWyO]cO^hOanObmOgcOiTOjcOkcOnTOpTOuROwcOxcOycO!PSO!ZkO!`UO!cTO!dTO!eTO!fTO!gTO!jlO#`sO#ppO#t^O${qO$}tO%PrO%QrO%TuO%VvO%YwO%ZwO%]xO%jzO%p{O%r|O%t}O%v!OO%y!PO&P!QO&T!RO&V!SO&X!TO&Z!UO&]!VO'WPO'aQO'mYO'zaO~OPZXYZX^ZXiZXrZXsZXuZX}ZX!]ZX!^ZX!`ZX!fZX!wZX#ScX#WZX#XZX#YZX#ZZX#[ZX#]ZX#^ZX#_ZX#aZX#cZX#eZX#fZX#kZX'RZX'aZX'nZX'uZX'vZX~O!X$hX~P$zO'O!XO'P!WO'Q!ZO~OPTOQTO]cOa!jOb!iOgcOiTOjcOkcOnTOpTOuROwcOxcOycO!P!bO!ZkO!`UO!cTO!dTO!eTO!fTO!gTO!j!hO#p!kO#t^O'W![O'aQO'mYO'zaO~O|!`O}!]Oz'hPz'rP~P'dO!O!lO~P`OPTOQTO]cOa!jOb!iOgcOiTOjcOkcOnTOpTOuROwcOxcOycO!P!bO!ZkO!`UO!cTO!dTO!eTO!fTO!gTO!j!hO#p!kO#t^O'W9VO'aQO'mYO'zaO~OPTOQTO]cOa!jOb!iOgcOiTOjcOkcOnTOpTOuROwcOxcOycO!P!bO!ZkO!`UO!cTO!dTO!eTO!fTO!gTO!j!hO#p!kO#t^O'aQO'mYO'zaO~O|!qO#Q!tO#R!qO'W9WO!_'oP~P+{O#S!uO~O!X!vO#S!uO~OP#]OY#cOi#QOr!zOs!zOu!{O}#aO!]#SO!^!xO!`!yO!f#]O#W#OO#X#PO#Y#PO#Z#PO#[#RO#]#SO#^#SO#_#SO#a#TO#c#VO#e#XO#f#YO'aQO'n#ZO'u!|O'v!}O~O^'eX'R'eX!_'eXz'eX!P'eX$|'eX!X'eX~P.jO!w#dO#k#dOP'fXY'fX^'fXi'fXr'fXs'fXu'fX}'fX!]'fX!^'fX!`'fX!f'fX#W'fX#X'fX#Y'fX#Z'fX#['fX#]'fX#^'fX#a'fX#c'fX#e'fX#f'fX'a'fX'n'fX'u'fX'v'fX~O#_'fX'R'fXz'fX!_'fX'c'fX!P'fX$|'fX!X'fX~P0zO!w#dO~O#v#eO#}#iO~O!P#jO#t^O$Q#kO$S#mO~O]#pOg#}Oi#qOj#pOk#pOn$OOp$POu#wO!P#xO!Z$UO!`#uO#R$VO#p$SO$Z$QO$]$RO$`$TO'W#oO'a#rO'['^P~O!`$WO~O!X$YO~O^$ZO'R$ZO~O'W$_O~O!`$WO'W$_O'X$aO']$bO~Ob$hO!`$WO'W$_O~O#_#SO~O]$qOr$mO!P$jO!`$lO$}$pO'W$_O'X$aO[(SP~O!j$rO~Ou$sO!P$tO'W$_O~Ou$sO!P$tO%V$xO'W$_O~O'W$yO~O#`sO$}tO%PrO%QrO%TuO%VvO%YwO%ZwO~Oa%SOb%RO!j%PO${%QO%_%OO~P7uOa%VObmO!P%UO!jlO#`sO${qO%PrO%QrO%TuO%VvO%YwO%ZwO%]xO~O_%YO!w%]O$}%WO'X$aO~P8tO!`%^O!c%bO~O!`%cO~O!PSO~O^$ZO&}%kO'R$ZO~O^$ZO&}%nO'R$ZO~O^$ZO&}%pO'R$ZO~O'O!XO'P!WO'Q%tO~OPZXYZXiZXrZXsZXuZX}ZX}cX!]ZX!^ZX!`ZX!fZX!wZX!wcX#ScX#WZX#XZX#YZX#ZZX#[ZX#]ZX#^ZX#_ZX#aZX#cZX#eZX#fZX#kZX'aZX'nZX'uZX'vZX~OzZXzcX~P;aO|%vOz&cX}&cX~P){O}!]Oz'hX~OP#]OY#cOi#QOr!zOs!zOu!{O}!]O!]#SO!^!xO!`!yO!f#]O#W#OO#X#PO#Y#PO#Z#PO#[#RO#]#SO#^#SO#_#SO#a#TO#c#VO#e#XO#f#YO'aQO'n#ZO'u!|O'v!}O~Oz'hX~P>WOz%{O~Ou&OO!S&YO!T&RO!U&RO'X$aO~O]&POj&PO|&SO'd%|O!O'iP!O'tP~P@ZOz'qX}'qX!X'qX!_'qX'n'qX~O!w'qX#S!{X!O'qX~PASO!w&ZOz'sX}'sX~O}&[Oz'rX~Oz&^O~O!w#dO~PASOR&bO!P&_O!k&aO'W$_O~Ob&gO!`$WO'W$_O~Or$mO!`$lO~O!O&hO~P`Or!zOs!zOu!{O!^!xO!`!yO'aQOP!baY!bai!ba}!ba!]!ba!f!ba#W!ba#X!ba#Y!ba#Z!ba#[!ba#]!ba#^!ba#_!ba#a!ba#c!ba#e!ba#f!ba'n!ba'u!ba'v!ba~O^!ba'R!baz!ba!_!ba'c!ba!P!ba$|!ba!X!ba~PC]O!_&iO~O!X!vO!w&kO'n&jO}'pX^'pX'R'pX~O!_'pX~PEuO}&oO!_'oX~O!_&qO~Ou$sO!P$tO#R&rO'W$_O~OPTOQTO]cOa!jOb!iOgcOiTOjcOkcOnTOpTOuROwcOxcOycO!PSO!ZkO!`UO!cTO!dTO!eTO!fTO!gTO!j!hO#p!kO#t^O'W9VO'aQO'mYO'zaO~O]#pOg#}Oi#qOj#pOk#pOn$OOp9iOu#wO!P#xO!Z:lO!`#uO#R9oO#p$SO$Z9kO$]9mO$`$TO'W&vO'a#rO~O#S&xO~O]#pOg#}Oi#qOj#pOk#pOn$OOp$POu#wO!P#xO!Z$UO!`#uO#R$VO#p$SO$Z$QO$]$RO$`$TO'W&vO'a#rO~O'['kP~PJ^O|&|O!_'lP~P){O'd'OO'mYO~OP9SOQ9SO]cOa:jOb!iOgcOi9SOjcOkcOn9SOp9SOuROwcOxcOycO!P!bO!Z9UO!`UO!c9SO!d9SO!e9SO!f9SO!g9SO!j!hO#p!kO#t^O'W'^O'aQO'mYO'z:hO~O!`!yO~O}#aO^$Xa'R$Xa!_$Xaz$Xa!P$Xa$|$Xa!X$Xa~O#`'eO~PH}O!X'gO!P'wX#s'wX#v'wX#}'wX~Or'hO~PNyOr'hO!P'wX#s'wX#v'wX#}'wX~O!P'jO#s'nO#v'iO#}'oO~O|'rO~PLRO#v#eO#}'uO~Or$aXu$aX!^$aX'n$aX'u$aX'v$aX~OReX}eX!weX'[eX'[$aX~P!!cOj'wO~O'O'yO'P'xO'Q'{O~Or'}Ou(OO'n#ZO'u(QO'v(SO~O'['|O~P!#lO'[(VO~O]#pOg#}Oi#qOj#pOk#pOn$OOp9iOu#wO!P#xO!Z:lO!`#uO#R9oO#p$SO$Z9kO$]9mO$`$TO'a#rO~O|(ZO'W(WO!_'{P~P!$ZO#S(]O~O|(aO'W(^Oz'|P~P!$ZO^(jOi(oOu(gO!S(mO!T(fO!U(fO!`(dO!t(nO$s(iO'X$aO'd(cO~O!O(lO~P!&RO!^!xOr'`Xu'`X'n'`X'u'`X'v'`X}'`X!w'`X~O'['`X#i'`X~P!&}OR(rO!w(qO}'_X'['_X~O}(sO'['^X~O'W(uO~O!`(zO~O'W&vO~O!`(dO~Ou$sO|!qO!P$tO#Q!tO#R!qO'W$_O!_'oP~O!X!vO#S)OO~OP#]OY#cOi#QOr!zOs!zOu!{O!]#SO!^!xO!`!yO!f#]O#W#OO#X#PO#Y#PO#Z#PO#[#RO#]#SO#^#SO#_#SO#a#TO#c#VO#e#XO#f#YO'aQO'n#ZO'u!|O'v!}O~O^!Ya}!Ya'R!Yaz!Ya!_!Ya'c!Ya!P!Ya$|!Ya!X!Ya~P!)`OR)WO!P&_O!k)VO$|)UO']$bO~O'W$yO'['^P~O!X)ZO!P'ZX^'ZX'R'ZX~O!`$WO']$bO~O!`$WO'W$_O']$bO~O!X!vO#S&xO~O$})gO'W)cO!O(TP~O})hO[(SX~O'd'OO~OY)lO~O[)mO~O!P$jO'W$_O'X$aO[(SP~Ou$sO|)rO!P$tO'W$_Oz'rP~O]&VOj&VO|)sO'd'OO!O'tP~O})tO^(PX'R(PX~O!w)xO']$bO~OR){O!P#xO']$bO~O!P)}O~Or*PO!PSO~O!j*UO~Ob*ZO~O'W(uO!O(RP~Ob$hO~O$}tO'W$yO~P8tOY*aO[*`O~OPTOQTO]cOanObmOgcOiTOjcOkcOnTOpTOuROwcOxcOycO!ZkO!`UO!cTO!dTO!eTO!fTO!gTO!jlO#t^O${qO'aQO'mYO'zaO~O!P!bO#p!kO'W9VO~P!0uO[*`O^$ZO'R$ZO~O^*eO#`*gO%P*gO%Q*gO~P){O!`%^O~O%p*lO~O!P*nO~O&Q*qO&R*pOP&OaQ&OaW&Oa]&Oa^&Oaa&Oab&Oag&Oai&Oaj&Oak&Oan&Oap&Oau&Oaw&Oax&Oay&Oa!P&Oa!Z&Oa!`&Oa!c&Oa!d&Oa!e&Oa!f&Oa!g&Oa!j&Oa#`&Oa#p&Oa#t&Oa${&Oa$}&Oa%P&Oa%Q&Oa%T&Oa%V&Oa%Y&Oa%Z&Oa%]&Oa%j&Oa%p&Oa%r&Oa%t&Oa%v&Oa%y&Oa&P&Oa&T&Oa&V&Oa&X&Oa&Z&Oa&]&Oa&|&Oa'W&Oa'a&Oa'm&Oa'z&Oa!O&Oa%w&Oa_&Oa%|&Oa~O'W*tO~O'c*wO~Oz&ca}&ca~P!)`O}!]Oz'ha~Oz'ha~P>WO}&[Oz'ra~O}tX}!VX!OtX!O!VX!XtX!X!VX!`!VX!wtX']!VX~O!X+OO!w*}O}#PX}'jX!O#PX!O'jX!X'jX!`'jX']'jX~O!X+QO!`$WO']$bO}!RX!O!RX~O]%}Oj%}Ou&OO'd(cO~OP9SOQ9SO]cOa:jOb!iOgcOi9SOjcOkcOn9SOp9SOuROwcOxcOycO!P!bO!Z9UO!`UO!c9SO!d9SO!e9SO!f9SO!g9SO!j!hO#p!kO#t^O'aQO'mYO'z:hO~O'W9sO~P!:sO}+UO!O'iX~O!O+WO~O!X+OO!w*}O}#PX!O#PX~O}+XO!O'tX~O!O+ZO~O]%}Oj%}Ou&OO'X$aO'd(cO~O!T+[O!U+[O~P!=qOu$sO|+_O!P$tO'W$_Oz&hX}&hX~O^+dO!S+gO!T+cO!U+cO!n+kO!o+iO!p+jO!q+hO!t+lO'X$aO'd(cO'm+aO~O!O+fO~P!>rOR+qO!P&_O!k+pO~O!w+wO}'pa!_'pa^'pa'R'pa~O!X!vO~P!?|O}&oO!_'oa~Ou$sO|+zO!P$tO#Q+|O#R+zO'W$_O}&jX!_&jX~O^!zi}!zi'R!ziz!zi!_!zi'c!zi!P!zi$|!zi!X!zi~P!)`O#S!va}!va!_!va!w!va!P!va^!va'R!vaz!va~P!#lO#S'`XP'`XY'`X^'`Xi'`Xs'`X!]'`X!`'`X!f'`X#W'`X#X'`X#Y'`X#Z'`X#['`X#]'`X#^'`X#_'`X#a'`X#c'`X#e'`X#f'`X'R'`X'a'`X!_'`Xz'`X!P'`X'c'`X$|'`X!X'`X~P!&}O},VO'['kX~P!#lO'[,XO~O},YO!_'lX~P!)`O!_,]O~Oz,^O~OP#]Or!zOs!zOu!{O!^!xO!`!yO!f#]O'aQOY#Vi^#Vii#Vi}#Vi!]#Vi#X#Vi#Y#Vi#Z#Vi#[#Vi#]#Vi#^#Vi#_#Vi#a#Vi#c#Vi#e#Vi#f#Vi'R#Vi'n#Vi'u#Vi'v#Viz#Vi!_#Vi'c#Vi!P#Vi$|#Vi!X#Vi~O#W#Vi~P!EZO#W#OO~P!EZOP#]Or!zOs!zOu!{O!^!xO!`!yO!f#]O#W#OO#X#PO#Y#PO#Z#PO'aQOY#Vi^#Vi}#Vi!]#Vi#[#Vi#]#Vi#^#Vi#_#Vi#a#Vi#c#Vi#e#Vi#f#Vi'R#Vi'n#Vi'u#Vi'v#Viz#Vi!_#Vi'c#Vi!P#Vi$|#Vi!X#Vi~Oi#Vi~P!GuOi#QO~P!GuOP#]Oi#QOr!zOs!zOu!{O!^!xO!`!yO!f#]O#W#OO#X#PO#Y#PO#Z#PO#[#RO'aQO^#Vi}#Vi#a#Vi#c#Vi#e#Vi#f#Vi'R#Vi'n#Vi'u#Vi'v#Viz#Vi!_#Vi'c#Vi!P#Vi$|#Vi!X#Vi~OY#Vi!]#Vi#]#Vi#^#Vi#_#Vi~P!JaOY#cO!]#SO#]#SO#^#SO#_#SO~P!JaOP#]OY#cOi#QOr!zOs!zOu!{O!]#SO!^!xO!`!yO!f#]O#W#OO#X#PO#Y#PO#Z#PO#[#RO#]#SO#^#SO#_#SO#a#TO'aQO^#Vi}#Vi#c#Vi#e#Vi#f#Vi'R#Vi'n#Vi'v#Viz#Vi!_#Vi'c#Vi!P#Vi$|#Vi!X#Vi~O'u#Vi~P!MXO'u!|O~P!MXOP#]OY#cOi#QOr!zOs!zOu!{O!]#SO!^!xO!`!yO!f#]O#W#OO#X#PO#Y#PO#Z#PO#[#RO#]#SO#^#SO#_#SO#a#TO#c#VO'aQO'u!|O^#Vi}#Vi#e#Vi#f#Vi'R#Vi'n#Viz#Vi!_#Vi'c#Vi!P#Vi$|#Vi!X#Vi~O'v#Vi~P# sO'v!}O~P# sOP#]OY#cOi#QOr!zOs!zOu!{O!]#SO!^!xO!`!yO!f#]O#W#OO#X#PO#Y#PO#Z#PO#[#RO#]#SO#^#SO#_#SO#a#TO#c#VO#e#XO'aQO'u!|O'v!}O~O^#Vi}#Vi#f#Vi'R#Vi'n#Viz#Vi!_#Vi'c#Vi!P#Vi$|#Vi!X#Vi~P#$_OPZXYZXiZXrZXsZXuZX!]ZX!^ZX!`ZX!fZX!wZX#ScX#WZX#XZX#YZX#ZZX#[ZX#]ZX#^ZX#_ZX#aZX#cZX#eZX#fZX#kZX'aZX'nZX'uZX'vZX}ZX!OZX~O#iZX~P#&rOP#]OY9gOi9[Or!zOs!zOu!{O!]9^O!^!xO!`!yO!f#]O#W9YO#X9ZO#Y9ZO#Z9ZO#[9]O#]9^O#^9^O#_9^O#a9_O#c9aO#e9cO#f9dO'aQO'n#ZO'u!|O'v!}O~O#i,`O~P#(|OP'fXY'fXi'fXr'fXs'fXu'fX!]'fX!^'fX!`'fX!f'fX#W'fX#X'fX#Y'fX#Z'fX#['fX#]'fX#^'fX#a'fX#c'fX#e'fX#f'fX'a'fX'n'fX'u'fX'v'fX}'fX~O!w9hO#k9hO#_'fX#i'fX!O'fX~P#*wO^&ma}&ma'R&ma!_&ma'c&maz&ma!P&ma$|&ma!X&ma~P!)`OP#ViY#Vi^#Vii#Vis#Vi}#Vi!]#Vi!^#Vi!`#Vi!f#Vi#W#Vi#X#Vi#Y#Vi#Z#Vi#[#Vi#]#Vi#^#Vi#_#Vi#a#Vi#c#Vi#e#Vi#f#Vi'R#Vi'a#Viz#Vi!_#Vi'c#Vi!P#Vi$|#Vi!X#Vi~P!#lO^#ji}#ji'R#jiz#ji!_#ji'c#ji!P#ji$|#ji!X#ji~P!)`O#v,bO~O#v,cO~O!X'gO!w,dO!P#zX#s#zX#v#zX#}#zX~O|,eO~O!P'jO#s,gO#v'iO#},hO~O}9eO!O'eX~P#(|O!O,iO~O#},kO~O'O'yO'P'xO'Q,nO~O],qOj,qOz,rO~O}cX!XcX!_cX!_$aX'ncX~P!!cO!_,xO~P!#lO},yO!X!vO'n&jO!_'{X~O!_-OO~Oz$aX}$aX!X$hX~P!!cO}-QOz'|X~P!#lO!X-SO~Oz-UO~O|(ZO'W$_O!_'{P~Oi-YO!X!vO!`$WO']$bO'n&jO~O!X)ZO~O!O-`O~P!&RO!T-aO!U-aO'X$aO'd(cO~Ou-cO'd(cO~O!t-dO~O'W$yO}&rX'[&rX~O}(sO'['^a~Or-iOs-iOu-jO'noa'uoa'voa}oa!woa~O'[oa#ioa~P#5{Or'}Ou(OO'n$Ya'u$Ya'v$Ya}$Ya!w$Ya~O'[$Ya#i$Ya~P#6qOr'}Ou(OO'n$[a'u$[a'v$[a}$[a!w$[a~O'[$[a#i$[a~P#7dO]-kO~O#S-lO~O'[$ja}$ja#i$ja!w$ja~P!#lO#S-oO~OR-xO!P&_O!k-wO$|-vO~O'[-yO~O]#pOi#qOj#pOk#pOn$OOp9iOu#wO!P#xO!Z:lO!`#uO#R9oO#p$SO$Z9kO$]9mO$`$TO'a#rO~Og-{O'W-zO~P#9ZO!X)ZO!P'Za^'Za'R'Za~O#S.RO~OYZX}cX!OcX~O}.SO!O(TX~O!O.UO~OY.VO~O'W)cO~O!P$jO'W$_O[&zX}&zX~O})hO[(Sa~O!_.[O~P!)`O].^O~OY._O~O[.`O~OR-xO!P&_O!k-wO$|-vO']$bO~O})tO^(Pa'R(Pa~O!w.fO~OR.iO!P#xO~O'd'OO!O(QP~OR.sO!P.oO!k.rO$|.qO']$bO~OY.}O}.{O!O(RX~O!O/OO~O[/QO^$ZO'R$ZO~O]/RO~O#_/TO%n/UO~P0zO!w#dO#_/TO%n/UO~O^/VO~P){O^/XO~O%w/]OP%uiQ%uiW%ui]%ui^%uia%uib%uig%uii%uij%uik%uin%uip%uiu%uiw%uix%uiy%ui!P%ui!Z%ui!`%ui!c%ui!d%ui!e%ui!f%ui!g%ui!j%ui#`%ui#p%ui#t%ui${%ui$}%ui%P%ui%Q%ui%T%ui%V%ui%Y%ui%Z%ui%]%ui%j%ui%p%ui%r%ui%t%ui%v%ui%y%ui&P%ui&T%ui&V%ui&X%ui&Z%ui&]%ui&|%ui'W%ui'a%ui'm%ui'z%ui!O%ui_%ui%|%ui~O_/cO!O/aO%|/bO~P`O!PSO!`/fO~O}#aO'c$Xa~Oz&ci}&ci~P!)`O}!]Oz'hi~O}&[Oz'ri~Oz/jO~O}!Ra!O!Ra~P#(|O]%}Oj%}O|/pO'd(cO}&dX!O&dX~P@ZO}+UO!O'ia~O]&VOj&VO|)sO'd'OO}&iX!O&iX~O}+XO!O'ta~Oz'si}'si~P!)`O^$ZO!X!vO!`$WO!f/{O!w/yO'R$ZO']$bO'n&jO~O!O0OO~P!>rO!T0PO!U0PO'X$aO'd(cO'm+aO~O!S0QO~P#GTO!PSO!S0QO!q0SO!t0TO~P#GTO!S0QO!o0VO!p0VO!q0SO!t0TO~P#GTO!P&_O~O!P&_O~P!#lO}'pi!_'pi^'pi'R'pi~P!)`O!w0`O}'pi!_'pi^'pi'R'pi~O}&oO!_'oi~Ou$sO!P$tO#R0bO'W$_O~O#SoaPoaYoa^oaioa!]oa!^oa!`oa!foa#Woa#Xoa#Yoa#Zoa#[oa#]oa#^oa#_oa#aoa#coa#eoa#foa'Roa'aoa!_oazoa!Poa'coa$|oa!Xoa~P#5{O#S$YaP$YaY$Ya^$Yai$Yas$Ya!]$Ya!^$Ya!`$Ya!f$Ya#W$Ya#X$Ya#Y$Ya#Z$Ya#[$Ya#]$Ya#^$Ya#_$Ya#a$Ya#c$Ya#e$Ya#f$Ya'R$Ya'a$Ya!_$Yaz$Ya!P$Ya'c$Ya$|$Ya!X$Ya~P#6qO#S$[aP$[aY$[a^$[ai$[as$[a!]$[a!^$[a!`$[a!f$[a#W$[a#X$[a#Y$[a#Z$[a#[$[a#]$[a#^$[a#_$[a#a$[a#c$[a#e$[a#f$[a'R$[a'a$[a!_$[az$[a!P$[a'c$[a$|$[a!X$[a~P#7dO#S$jaP$jaY$ja^$jai$jas$ja}$ja!]$ja!^$ja!`$ja!f$ja#W$ja#X$ja#Y$ja#Z$ja#[$ja#]$ja#^$ja#_$ja#a$ja#c$ja#e$ja#f$ja'R$ja'a$ja!_$jaz$ja!P$ja!w$ja'c$ja$|$ja!X$ja~P!#lO^!zq}!zq'R!zqz!zq!_!zq'c!zq!P!zq$|!zq!X!zq~P!)`O}&eX'[&eX~PJ^O},VO'['ka~O|0jO}&fX!_&fX~P){O},YO!_'la~O},YO!_'la~P!)`O#i!ba!O!ba~PC]O#i!Ya}!Ya!O!Ya~P#(|O!P0}O#t^O#{1OO~O!O1SO~O'c1TO~P!#lO^$Uq}$Uq'R$Uqz$Uq!_$Uq'c$Uq!P$Uq$|$Uq!X$Uq~P!)`Oz1UO~O],qOj,qO~Or'}Ou(OO'v(SO'n$ti'u$ti}$ti!w$ti~O'[$ti#i$ti~P$'tOr'}Ou(OO'n$vi'u$vi'v$vi}$vi!w$vi~O'[$vi#i$vi~P$(gO#i1VO~P!#lO|1XO'W$_O}&nX!_&nX~O},yO!_'{a~O},yO!X!vO!_'{a~O},yO!X!vO'n&jO!_'{a~O'[$ci}$ci#i$ci!w$ci~P!#lO|1`O'W(^Oz&pX}&pX~P!$ZO}-QOz'|a~O}-QOz'|a~P!#lO!X!vO~O!X!vO#_1jO~Oi1nO!X!vO'n&jO~O}'_i'['_i~P!#lO!w1qO}'_i'['_i~P!#lO!_1tO~O^$Vq}$Vq'R$Vqz$Vq!_$Vq'c$Vq!P$Vq$|$Vq!X$Vq~P!)`O}1xO!P'}X~P!#lO!P&_O$|1{O~O!P&_O$|1{O~P!#lO!P$aX$qZX^$aX'R$aX~P!!cO$q2POrfXufX!PfX'nfX'ufX'vfX^fX'RfX~O$q2PO~O$}2WO'W)cO}&yX!O&yX~O}.SO!O(Ta~OY2[O~O[2]O~O]2`O~OR2bO!P&_O!k2aO$|1{O~O^$ZO'R$ZO~P!#lO!P#xO~P!#lO}2gO!w2iO!O(QX~O!O2jO~Ou(gO!S2sO!T2lO!U2lO!n2rO!o2qO!p2qO!t2pO'X$aO'd(cO'm+aO~O!O2oO~P$0uOR2zO!P.oO!k2yO$|2xO~OR2zO!P.oO!k2yO$|2xO']$bO~O'W(uO}&xX!O&xX~O}.{O!O(Ra~O'd3TO~O]3VO~O[3XO~O!_3[O~P){O^3^O~O^3^O~P){O#_3`O%n3aO~PEuO_/cO!O3eO%|/bO~P`O!X3gO~O&R3hOP&OqQ&OqW&Oq]&Oq^&Oqa&Oqb&Oqg&Oqi&Oqj&Oqk&Oqn&Oqp&Oqu&Oqw&Oqx&Oqy&Oq!P&Oq!Z&Oq!`&Oq!c&Oq!d&Oq!e&Oq!f&Oq!g&Oq!j&Oq#`&Oq#p&Oq#t&Oq${&Oq$}&Oq%P&Oq%Q&Oq%T&Oq%V&Oq%Y&Oq%Z&Oq%]&Oq%j&Oq%p&Oq%r&Oq%t&Oq%v&Oq%y&Oq&P&Oq&T&Oq&V&Oq&X&Oq&Z&Oq&]&Oq&|&Oq'W&Oq'a&Oq'm&Oq'z&Oq!O&Oq%w&Oq_&Oq%|&Oq~O}#Pi!O#Pi~P#(|O!w3jO}#Pi!O#Pi~O}!Ri!O!Ri~P#(|O^$ZO!w3qO'R$ZO~O^$ZO!X!vO!w3qO'R$ZO~O!T3uO!U3uO'X$aO'd(cO'm+aO~O^$ZO!X!vO!`$WO!f3vO!w3qO'R$ZO']$bO'n&jO~O!S3wO~P$9_O!S3wO!q3zO!t3{O~P$9_O^$ZO!X!vO!f3vO!w3qO'R$ZO'n&jO~O}'pq!_'pq^'pq'R'pq~P!)`O}&oO!_'oq~O#S$tiP$tiY$ti^$tii$tis$ti!]$ti!^$ti!`$ti!f$ti#W$ti#X$ti#Y$ti#Z$ti#[$ti#]$ti#^$ti#_$ti#a$ti#c$ti#e$ti#f$ti'R$ti'a$ti!_$tiz$ti!P$ti'c$ti$|$ti!X$ti~P$'tO#S$viP$viY$vi^$vii$vis$vi!]$vi!^$vi!`$vi!f$vi#W$vi#X$vi#Y$vi#Z$vi#[$vi#]$vi#^$vi#_$vi#a$vi#c$vi#e$vi#f$vi'R$vi'a$vi!_$viz$vi!P$vi'c$vi$|$vi!X$vi~P$(gO#S$ciP$ciY$ci^$cii$cis$ci}$ci!]$ci!^$ci!`$ci!f$ci#W$ci#X$ci#Y$ci#Z$ci#[$ci#]$ci#^$ci#_$ci#a$ci#c$ci#e$ci#f$ci'R$ci'a$ci!_$ciz$ci!P$ci!w$ci'c$ci$|$ci!X$ci~P!#lO}&ea'[&ea~P!#lO}&fa!_&fa~P!)`O},YO!_'li~O#i!zi}!zi!O!zi~P#(|OP#]Or!zOs!zOu!{O!^!xO!`!yO!f#]O'aQOY#Vii#Vi!]#Vi#X#Vi#Y#Vi#Z#Vi#[#Vi#]#Vi#^#Vi#_#Vi#a#Vi#c#Vi#e#Vi#f#Vi#i#Vi'n#Vi'u#Vi'v#Vi}#Vi!O#Vi~O#W#Vi~P$BuO#W9YO~P$BuOP#]Or!zOs!zOu!{O!^!xO!`!yO!f#]O#W9YO#X9ZO#Y9ZO#Z9ZO'aQOY#Vi!]#Vi#[#Vi#]#Vi#^#Vi#_#Vi#a#Vi#c#Vi#e#Vi#f#Vi#i#Vi'n#Vi'u#Vi'v#Vi}#Vi!O#Vi~Oi#Vi~P$D}Oi9[O~P$D}OP#]Oi9[Or!zOs!zOu!{O!^!xO!`!yO!f#]O#W9YO#X9ZO#Y9ZO#Z9ZO#[9]O'aQO#a#Vi#c#Vi#e#Vi#f#Vi#i#Vi'n#Vi'u#Vi'v#Vi}#Vi!O#Vi~OY#Vi!]#Vi#]#Vi#^#Vi#_#Vi~P$GVOY9gO!]9^O#]9^O#^9^O#_9^O~P$GVOP#]OY9gOi9[Or!zOs!zOu!{O!]9^O!^!xO!`!yO!f#]O#W9YO#X9ZO#Y9ZO#Z9ZO#[9]O#]9^O#^9^O#_9^O#a9_O'aQO#c#Vi#e#Vi#f#Vi#i#Vi'n#Vi'v#Vi}#Vi!O#Vi~O'u#Vi~P$IkO'u!|O~P$IkOP#]OY9gOi9[Or!zOs!zOu!{O!]9^O!^!xO!`!yO!f#]O#W9YO#X9ZO#Y9ZO#Z9ZO#[9]O#]9^O#^9^O#_9^O#a9_O#c9aO'aQO'u!|O#e#Vi#f#Vi#i#Vi'n#Vi}#Vi!O#Vi~O'v#Vi~P$KsO'v!}O~P$KsOP#]OY9gOi9[Or!zOs!zOu!{O!]9^O!^!xO!`!yO!f#]O#W9YO#X9ZO#Y9ZO#Z9ZO#[9]O#]9^O#^9^O#_9^O#a9_O#c9aO#e9cO'aQO'u!|O'v!}O~O#f#Vi#i#Vi'n#Vi}#Vi!O#Vi~P$M{O^#gy}#gy'R#gyz#gy!_#gy'c#gy!P#gy$|#gy!X#gy~P!)`OP#ViY#Vii#Vis#Vi!]#Vi!^#Vi!`#Vi!f#Vi#W#Vi#X#Vi#Y#Vi#Z#Vi#[#Vi#]#Vi#^#Vi#_#Vi#a#Vi#c#Vi#e#Vi#f#Vi#i#Vi'a#Vi}#Vi!O#Vi~P!#lO!^!xOP'`XY'`Xi'`Xr'`Xs'`Xu'`X!]'`X!`'`X!f'`X#W'`X#X'`X#Y'`X#Z'`X#['`X#]'`X#^'`X#_'`X#a'`X#c'`X#e'`X#f'`X#i'`X'a'`X'n'`X'u'`X'v'`X}'`X!O'`X~O#i#ji}#ji!O#ji~P#(|O!O4]O~O}&ma!O&ma~P#(|O!X!vO'n&jO}&na!_&na~O},yO!_'{i~O},yO!X!vO!_'{i~Oz&pa}&pa~P!#lO!X4dO~O}-QOz'|i~P!#lO}-QOz'|i~Oz4jO~O!X!vO#_4pO~Oi4qO!X!vO'n&jO~Oz4sO~O'[$eq}$eq#i$eq!w$eq~P!#lO^$Vy}$Vy'R$Vyz$Vy!_$Vy'c$Vy!P$Vy$|$Vy!X$Vy~P!)`O}1xO!P'}a~O!P&_O$|4xO~O!P&_O$|4xO~P!#lO^!zy}!zy'R!zyz!zy!_!zy'c!zy!P!zy$|!zy!X!zy~P!)`OY4{O~O}.SO!O(Ti~O]5QO~O[5RO~O'd'OO}&uX!O&uX~O}2gO!O(Qa~O!O5`O~P$0uOu-cO'd(cO'm+aO~O!S5cO!T5bO!U5bO!t0TO'X$aO'd(cO'm+aO~O!o5dO!p5dO~P%,eO!T5bO!U5bO'X$aO'd(cO'm+aO~O!P.oO~O!P.oO$|5fO~O!P.oO$|5fO~P!#lOR5kO!P.oO!k5jO$|5fO~OY5pO}&xa!O&xa~O}.{O!O(Ri~O]5sO~O!_5tO~O!_5uO~O!_5vO~O!_5vO~P){O^5xO~O!X5{O~O!_5}O~O}'si!O'si~P#(|O^$ZO'R$ZO~P!)`O^$ZO!w6SO'R$ZO~O^$ZO!X!vO!w6SO'R$ZO~O!T6XO!U6XO'X$aO'd(cO'm+aO~O^$ZO!X!vO!f6YO!w6SO'R$ZO'n&jO~O!`$WO']$bO~P%1PO!S6ZO~P%0nO}'py!_'py^'py'R'py~P!)`O#S$eqP$eqY$eq^$eqi$eqs$eq}$eq!]$eq!^$eq!`$eq!f$eq#W$eq#X$eq#Y$eq#Z$eq#[$eq#]$eq#^$eq#_$eq#a$eq#c$eq#e$eq#f$eq'R$eq'a$eq!_$eqz$eq!P$eq!w$eq'c$eq$|$eq!X$eq~P!#lO}&fi!_&fi~P!)`O#i!zq}!zq!O!zq~P#(|Or-iOs-iOu-jOPoaYoaioa!]oa!^oa!`oa!foa#Woa#Xoa#Yoa#Zoa#[oa#]oa#^oa#_oa#aoa#coa#eoa#foa#ioa'aoa'noa'uoa'voa}oa!Ooa~Or'}Ou(OOP$YaY$Yai$Yas$Ya!]$Ya!^$Ya!`$Ya!f$Ya#W$Ya#X$Ya#Y$Ya#Z$Ya#[$Ya#]$Ya#^$Ya#_$Ya#a$Ya#c$Ya#e$Ya#f$Ya#i$Ya'a$Ya'n$Ya'u$Ya'v$Ya}$Ya!O$Ya~Or'}Ou(OOP$[aY$[ai$[as$[a!]$[a!^$[a!`$[a!f$[a#W$[a#X$[a#Y$[a#Z$[a#[$[a#]$[a#^$[a#_$[a#a$[a#c$[a#e$[a#f$[a#i$[a'a$[a'n$[a'u$[a'v$[a}$[a!O$[a~OP$jaY$jai$jas$ja!]$ja!^$ja!`$ja!f$ja#W$ja#X$ja#Y$ja#Z$ja#[$ja#]$ja#^$ja#_$ja#a$ja#c$ja#e$ja#f$ja#i$ja'a$ja}$ja!O$ja~P!#lO#i$Uq}$Uq!O$Uq~P#(|O#i$Vq}$Vq!O$Vq~P#(|O!O6eO~O'[$xy}$xy#i$xy!w$xy~P!#lO!X!vO}&ni!_&ni~O!X!vO'n&jO}&ni!_&ni~O},yO!_'{q~Oz&pi}&pi~P!#lO}-QOz'|q~Oz6lO~P!#lOz6lO~O}'_y'['_y~P!#lO}&sa!P&sa~P!#lO!P$pq^$pq'R$pq~P!#lOY6tO~O}.SO!O(Tq~O]6wO~O!P&_O$|6xO~O!P&_O$|6xO~P!#lO!w6yO}&ua!O&ua~O}2gO!O(Qi~P#(|O!T7PO!U7PO'X$aO'd(cO'm+aO~O!S7RO!t3{O~P%@nO!P.oO$|7UO~O!P.oO$|7UO~P!#lO'd7[O~O}.{O!O(Rq~O!_7_O~O!_7_O~P){O!_7aO~O!_7bO~O}#Py!O#Py~P#(|O^$ZO!w7hO'R$ZO~O^$ZO!X!vO!w7hO'R$ZO~O!T7kO!U7kO'X$aO'd(cO'm+aO~O^$ZO!X!vO!f7lO!w7hO'R$ZO'n&jO~O#S$xyP$xyY$xy^$xyi$xys$xy}$xy!]$xy!^$xy!`$xy!f$xy#W$xy#X$xy#Y$xy#Z$xy#[$xy#]$xy#^$xy#_$xy#a$xy#c$xy#e$xy#f$xy'R$xy'a$xy!_$xyz$xy!P$xy!w$xy'c$xy$|$xy!X$xy~P!#lO#i#gy}#gy!O#gy~P#(|OP$ciY$cii$cis$ci!]$ci!^$ci!`$ci!f$ci#W$ci#X$ci#Y$ci#Z$ci#[$ci#]$ci#^$ci#_$ci#a$ci#c$ci#e$ci#f$ci#i$ci'a$ci}$ci!O$ci~P!#lOr'}Ou(OO'v(SOP$tiY$tii$tis$ti!]$ti!^$ti!`$ti!f$ti#W$ti#X$ti#Y$ti#Z$ti#[$ti#]$ti#^$ti#_$ti#a$ti#c$ti#e$ti#f$ti#i$ti'a$ti'n$ti'u$ti}$ti!O$ti~Or'}Ou(OOP$viY$vii$vis$vi!]$vi!^$vi!`$vi!f$vi#W$vi#X$vi#Y$vi#Z$vi#[$vi#]$vi#^$vi#_$vi#a$vi#c$vi#e$vi#f$vi#i$vi'a$vi'n$vi'u$vi'v$vi}$vi!O$vi~O#i$Vy}$Vy!O$Vy~P#(|O#i!zy}!zy!O!zy~P#(|O!X!vO}&nq!_&nq~O},yO!_'{y~Oz&pq}&pq~P!#lOz7rO~P!#lO}.SO!O(Ty~O}2gO!O(Qq~O!T8OO!U8OO'X$aO'd(cO'm+aO~O!P.oO$|8RO~O!P.oO$|8RO~P!#lO!_8UO~O&R8VOP&O!ZQ&O!ZW&O!Z]&O!Z^&O!Za&O!Zb&O!Zg&O!Zi&O!Zj&O!Zk&O!Zn&O!Zp&O!Zu&O!Zw&O!Zx&O!Zy&O!Z!P&O!Z!Z&O!Z!`&O!Z!c&O!Z!d&O!Z!e&O!Z!f&O!Z!g&O!Z!j&O!Z#`&O!Z#p&O!Z#t&O!Z${&O!Z$}&O!Z%P&O!Z%Q&O!Z%T&O!Z%V&O!Z%Y&O!Z%Z&O!Z%]&O!Z%j&O!Z%p&O!Z%r&O!Z%t&O!Z%v&O!Z%y&O!Z&P&O!Z&T&O!Z&V&O!Z&X&O!Z&Z&O!Z&]&O!Z&|&O!Z'W&O!Z'a&O!Z'm&O!Z'z&O!Z!O&O!Z%w&O!Z_&O!Z%|&O!Z~O^$ZO!w8[O'R$ZO~O^$ZO!X!vO!w8[O'R$ZO~OP$eqY$eqi$eqs$eq!]$eq!^$eq!`$eq!f$eq#W$eq#X$eq#Y$eq#Z$eq#[$eq#]$eq#^$eq#_$eq#a$eq#c$eq#e$eq#f$eq#i$eq'a$eq}$eq!O$eq~P!#lO}&uq!O&uq~P#(|O^$ZO!w8qO'R$ZO~OP$xyY$xyi$xys$xy!]$xy!^$xy!`$xy!f$xy#W$xy#X$xy#Y$xy#Z$xy#[$xy#]$xy#^$xy#_$xy#a$xy#c$xy#e$xy#f$xy#i$xy'a$xy}$xy!O$xy~P!#lO'c'eX~P.jO'cZXzZX!_ZX%nZX!PZX$|ZX!XZX~P$zO!XcX!_ZX!_cX'ncX~P;aOP9SOQ9SO]cOa:jOb!iOgcOi9SOjcOkcOn9SOp9SOuROwcOxcOycO!PSO!Z9UO!`UO!c9SO!d9SO!e9SO!f9SO!g9SO!j!hO#p!kO#t^O'W'^O'aQO'mYO'z:hO~O}9eO!O$Xa~O]#pOg#}Oi#qOj#pOk#pOn$OOp9jOu#wO!P#xO!Z:mO!`#uO#R9pO#p$SO$Z9lO$]9nO$`$TO'W&vO'a#rO~O#`'eO~P&+}O!OZX!OcX~P;aO#S9XO~O!X!vO#S9XO~O!w9hO~O#_9^O~O!w9qO}'sX!O'sX~O!w9hO}'qX!O'qX~O#S9rO~O'[9tO~P!#lO#S9yO~O#S9zO~O!X!vO#S9{O~O!X!vO#S9rO~O#i9|O~P#(|O#S9}O~O#S:OO~O#S:PO~O#S:QO~O#i:RO~P!#lO#i:SO~P!#lO#t~!^!n!p!q#Q#R'z$Z$]$`$q${$|$}%T%V%Y%Z%]%_~TS#t'z#Xy'T'U#v'T'W'd~",
+  goto: "#Dk(XPPPPPPP(YP(jP*^PPPP-sPP.Y3j5^5qP5qPPP5q5qP5qP7_PP7dP7xPPPP<XPPPP<X>wPPP>}AYP<XPCsPPPPEk<XPPPPPGd<XPPJcK`PPPPKdL|PMUNVPK`<X<X!#^!&V!*v!*v!.TPPP!.[!1O<XPPPPPPPPPP!3sP!5UPP<X!6cP<XP<X<X<X<XP<X!8vPP!;mP!>`!>h!>l!>lP!;jP!>p!>pP!AcP!Ag<X<X!Am!D_5qP5qP5q5qP!Eb5q5q!GY5q!I[5q!J|5q5q!Kj!Md!Md!Mh!Md!MpP!MdP5q!Nl5q# v5q5q-sPPP##TPP##m##mP##mP#$S##mPP#$YP#$PP#$P#$lMQ#$P#%Z#%a#%d(Y#%g(YP#%n#%n#%nP(YP(YP(YP(YPP(YP#%t#%wP#%w(YPPP(YP(YP(YP(YP(YP(Y(Y#%{#&V#&]#&c#&q#&w#&}#'X#'_#'i#'o#'}#(T#(Z#(i#)O#*b#*p#*v#*|#+S#+Y#+d#+j#+p#+z#,^#,dPPPPPPPPP#,jPP#-^#1[PP#2r#2y#3RP#7_PP#7c#9v#?p#?t#?w#?z#@V#@YPP#@]#@a#AO#As#Aw#BZPP#B_#Be#BiP#Bl#Bp#Bs#Cc#Cy#DO#DR#DU#D[#D_#Dc#DgmhOSj}!m$Y%a%d%e%g*i*n/]/`Q$gmQ$npQ%XyS&R!b+UQ&f!iS(f#x(kQ)a$hQ)n$pQ*Y%RQ+[&YS+c&_+eQ+u&gQ-a(mQ.z*ZY0P+g+h+i+j+kS2l.o2nU3u0Q0S0VU5b2q2r2sS6X3w3zS7P5c5dQ7k6ZR8O7R$l[ORSTUjk}!S!W!]!`!m!u!y!{#O#P#Q#R#S#T#U#V#W#X#Y#a#d$Y$l%Y%]%a%c%d%e%g%k%v&O&Z&a&k&x&|'|)O)V*e*i*n+p+w,Y,`-j-o-w.R.r/T/U/V/X/]/`/b/y0`0j2a2y3^3`3a3q5j5x6S7h8[8q!j'`#[#j&S'r*}+Q,e/p0}2i3j6y9S9U9X9Y9Z9[9]9^9_9`9a9b9c9d9e9h9q9r9t9{9|:P:Q:kQ(v$PQ)f$jQ*[%UQ*c%^Q,P9iQ-|)ZQ.X)gQ/S*aQ2V.SQ3R.{Q4U9jR4}2WpeOSjy}!m$Y%W%a%d%e%g*i*n/]/`R*^%Y&WVOSTjkn}!S!W!]!j!m!u!y!{#O#P#Q#R#S#T#U#V#W#X#Y#[#a#d#j$Y$l%Y%]%^%a%c%d%e%g%k%v&O&Z&a&k&x&|'r'|)O)V*e*i*n*}+Q+p+w,Y,`,e-j-o-w.R.r/T/U/V/X/]/`/b/p/y0`0j0}2a2i2y3^3`3a3j3q5j5x6S6y7h8[8q9S9U9X9Y9Z9[9]9^9_9`9a9b9c9d9e9h9q9r9t9{9|:P:Q:j:kW!cRU!`&SQ$`lQ$fmS$kp$pv$urs!q!t$W$s&[&o&r)r)s)t*g+O+_+z+|/f0bQ$}wQ&c!hQ&e!iS(Y#u(dS)`$g$hQ)d$jQ)q$rQ*T%PQ*X%RS+t&f&gQ,}(ZQ.Q)aQ.W)gQ.Y)hQ.])lQ.u*US.y*Y*ZQ0^+uQ1W,yQ2U.SQ2Y.VQ2_._Q3Q.zQ4a1XQ4|2WQ5P2[Q6s4{R7u6t!Y$dm!i$f$g$h&Q&e&f&g(e)`)a+R+b+t+u-Z.Q/u/|0R0^1m3t3y6V7i8]Q)X$`Q)y$zQ)|${Q*W%RQ.a)qQ.t*TU.x*X*Y*ZQ2{.uS3P.y.zQ5]2kQ5o3QS6}5^5aS7|7O7QQ8g7}R8v8hW#{a$b(s:hS$zt%WQ${uQ$|vR)w$x$V#za!v!x#c#u#w$Q$R$V&b'x(R(T(U(](a(q(r)U)W)Z)x){+q,V-Q-S-l-v-x.f.i.q.s1V1`1j1q1x1{2P2b2x2z4d4p4x5f5k6x7U8R9g9k9l9m9n9o9p9u9v9w9x9y9z9}:O:R:S:h:n:oV(w$P9i9jU&V!b$t+XQ'P!zQ)k$mQ.j)}Q1r-iR5X2g&YcORSTUjk}!S!W!]!`!m!u!y!{#O#P#Q#R#S#T#U#V#W#X#Y#[#a#d#j$Y$l%Y%]%^%a%c%d%e%g%k%v&O&S&Z&a&k&x&|'r'|)O)V*e*i*n*}+Q+p+w,Y,`,e-j-o-w.R.r/T/U/V/X/]/`/b/p/y0`0j0}2a2i2y3^3`3a3j3q5j5x6S6y7h8[8q9S9U9X9Y9Z9[9]9^9_9`9a9b9c9d9e9h9q9r9t9{9|:P:Q:k$]#`Z!_!n$^%u%y&t&{'R'S'T'U'V'W'X'Y'Z'[']'_'b'f'p)j*y+S+]+v,U,[,_,a,o-m/k/n0_0i0m0n0o0p0q0r0s0t0u0v0w0x0y0|1R1v2S3l3o4P4S4T4Y4Z5Z6O6R6_6c6d7e7x8Y8o8z9T:a&ZcORSTUjk}!S!W!]!`!m!u!y!{#O#P#Q#R#S#T#U#V#W#X#Y#[#a#d#j$Y$l%Y%]%^%a%c%d%e%g%k%v&O&S&Z&a&k&x&|'r'|)O)V*e*i*n*}+Q+p+w,Y,`,e-j-o-w.R.r/T/U/V/X/]/`/b/p/y0`0j0}2a2i2y3^3`3a3j3q5j5x6S6y7h8[8q9S9U9X9Y9Z9[9]9^9_9`9a9b9c9d9e9h9q9r9t9{9|:P:Q:kQ&T!bR/q+UY%}!b&R&Y+U+[S(e#x(kS+b&_+eS-Z(f(mQ-[(gQ-b(nQ.l*PU/|+c+g+hU0R+i+j+kS0W+l2pQ1m-aQ1o-cQ1p-dS2k.o2nU3t0P0Q0SQ3x0TQ3y0VS5^2l2sS5a2q2rU6V3u3w3zQ6[3{S7O5b5cQ7Q5dS7i6X6ZS7}7P7RQ8]7kR8h8OlhOSj}!m$Y%a%d%e%g*i*n/]/`Q%i!QS&s!u9XQ)^$eQ*R$}Q*S%OQ+r&dS,T&x9rS-n)O9{Q.O)_Q.n*QQ/d*pQ/e*qQ/m+PQ0U+iQ0[+sS1w-o:PQ2Q.PS2T.R:QQ3k/oQ3n/wQ3}0]Q4z2RQ5|3hQ6P3mQ6T3sQ6]4OQ7c5}Q7f6UQ8X7gQ8l8VQ8n8ZR8y8p$W#_Z!_!n%u%y&t&{'R'S'T'U'V'W'X'Y'Z'[']'_'b'f'p)j*y+S+]+v,U,[,_,o-m/k/n0_0i0m0n0o0p0q0r0s0t0u0v0w0x0y0|1R1v2S3l3o4P4S4T4Y4Z5Z6O6R6_6c6d7e7x8Y8o8z9T:aU(p#y&w0{T)S$^,a$W#^Z!_!n%u%y&t&{'R'S'T'U'V'W'X'Y'Z'[']'_'b'f'p)j*y+S+]+v,U,[,_,o-m/k/n0_0i0m0n0o0p0q0r0s0t0u0v0w0x0y0|1R1v2S3l3o4P4S4T4Y4Z5Z6O6R6_6c6d7e7x8Y8o8z9T:aQ'a#_S)R$^,aR-p)S&YcORSTUjk}!S!W!]!`!m!u!y!{#O#P#Q#R#S#T#U#V#W#X#Y#[#a#d#j$Y$l%Y%]%^%a%c%d%e%g%k%v&O&S&Z&a&k&x&|'r'|)O)V*e*i*n*}+Q+p+w,Y,`,e-j-o-w.R.r/T/U/V/X/]/`/b/p/y0`0j0}2a2i2y3^3`3a3j3q5j5x6S6y7h8[8q9S9U9X9Y9Z9[9]9^9_9`9a9b9c9d9e9h9q9r9t9{9|:P:Q:kQ%d{Q%e|Q%g!OQ%h!PR/[*lQ&`!hQ)T$`Q+o&cS-u)X)qS0X+m+nW1z-r-s-t.aS3|0Y0ZU4w1|1}2OU6q4v5T5UQ7t6rR8c7wT+d&_+eS+b&_+eU/|+c+g+hU0R+i+j+kS0W+l2pS2k.o2nU3t0P0Q0SQ3x0TQ3y0VS5^2l2sS5a2q2rU6V3u3w3zQ6[3{S7O5b5cQ7Q5dS7i6X6ZS7}7P7RQ8]7kR8h8OS+d&_+eT2m.o2nS&m!p/YQ,|(YQ-X(eS/{+b2kQ1],}S1g-Y-bU3v0R0W5aQ4`1WS4n1n1pU6Y3x3y7QQ6g4aQ6p4qR7l6[Q!wXS&l!p/YQ)P$XQ)[$cQ)b$iQ+x&mQ,{(YQ-W(eQ-](hQ-})]Q.v*VS/z+b2kS1[,|,}S1f-X-bQ1i-[Q1l-^Q2}.wW3r/{0R0W5aQ4_1WQ4c1]S4h1g1pQ4o1oQ5m3OW6W3v3x3y7QS6f4`4aQ6k4jQ6n4nQ6{5[Q7Y5nS7j6Y6[Q7n6gQ7p6lQ7s6pQ7z6|Q8T7ZQ8^7lQ8a7rQ8e7{Q8t8fQ8|8uQ9Q8}Q:Z:UQ:d:_R:e:`$nWORSTUjk}!S!W!]!`!m!u!y!{#O#P#Q#R#S#T#U#V#W#X#Y#a#d$Y$l%Y%]%^%a%c%d%e%g%k%v&O&Z&a&k&x&|'|)O)V*e*i*n+p+w,Y,`-j-o-w.R.r/T/U/V/X/]/`/b/y0`0j2a2y3^3`3a3q5j5x6S7h8[8qS!wn!j!j:T#[#j&S'r*}+Q,e/p0}2i3j6y9S9U9X9Y9Z9[9]9^9_9`9a9b9c9d9e9h9q9r9t9{9|:P:Q:kR:Z:j$nXORSTUjk}!S!W!]!`!m!u!y!{#O#P#Q#R#S#T#U#V#W#X#Y#a#d$Y$l%Y%]%^%a%c%d%e%g%k%v&O&Z&a&k&x&|'|)O)V*e*i*n+p+w,Y,`-j-o-w.R.r/T/U/V/X/]/`/b/y0`0j2a2y3^3`3a3q5j5x6S7h8[8qQ$Xb!Y$cm!i$f$g$h&Q&e&f&g(e)`)a+R+b+t+u-Z.Q/u/|0R0^1m3t3y6V7i8]S$in!jQ)]$dQ*V%RW.w*W*X*Y*ZU3O.x.y.zQ5[2kS5n3P3QU6|5]5^5aQ7Z5oU7{6}7O7QS8f7|7}S8u8g8hQ8}8v!j:U#[#j&S'r*}+Q,e/p0}2i3j6y9S9U9X9Y9Z9[9]9^9_9`9a9b9c9d9e9h9q9r9t9{9|:P:Q:kQ:_:iR:`:j$f]OSTjk}!S!W!]!m!u!y!{#O#P#Q#R#S#T#U#V#W#X#Y#a#d$Y$l%Y%]%a%c%d%e%g%k%v&O&Z&a&k&x&|'|)O)V*e*i*n+p+w,Y,`-j-o-w.R.r/T/U/V/X/]/`/b/y0`0j2a2y3^3`3a3q5j5x6S7h8[8qU!gRU!`v$urs!q!t$W$s&[&o&r)r)s)t*g+O+_+z+|/f0bQ*d%^!h:V#[#j'r*}+Q,e/p0}2i3j6y9S9U9X9Y9Z9[9]9^9_9`9a9b9c9d9e9h9q9r9t9{9|:P:Q:kR:Y&SS&W!b$tR/s+X$l[ORSTUjk}!S!W!]!`!m!u!y!{#O#P#Q#R#S#T#U#V#W#X#Y#a#d$Y$l%Y%]%a%c%d%e%g%k%v&O&Z&a&k&x&|'|)O)V*e*i*n+p+w,Y,`-j-o-w.R.r/T/U/V/X/]/`/b/y0`0j2a2y3^3`3a3q5j5x6S7h8[8q!j'`#[#j&S'r*}+Q,e/p0}2i3j6y9S9U9X9Y9Z9[9]9^9_9`9a9b9c9d9e9h9q9r9t9{9|:P:Q:kR*c%^$noORSTUjk}!S!W!]!`!m!u!y!{#O#P#Q#R#S#T#U#V#W#X#Y#a#d$Y$l%Y%]%^%a%c%d%e%g%k%v&O&Z&a&k&x&|'|)O)V*e*i*n+p+w,Y,`-j-o-w.R.r/T/U/V/X/]/`/b/y0`0j2a2y3^3`3a3q5j5x6S7h8[8qQ'P!z!k:W#[#j&S'r*}+Q,e/p0}2i3j6y9S9U9X9Y9Z9[9]9^9_9`9a9b9c9d9e9h9q9r9t9{9|:P:Q:k!h#UZ!_$^%u%y&t&{'Y'Z'[']'b'f)j*y+]+v,U,[,o-m0_0i0y1v2S3o4P4S6R7e8Y8o8z9T!R9`'_'p+S,a/k/n0m0u0v0w0x0|1R3l4T4Y4Z5Z6O6_6c6d7x:a!d#WZ!_$^%u%y&t&{'[']'b'f)j*y+]+v,U,[,o-m0_0i0y1v2S3o4P4S6R7e8Y8o8z9T}9b'_'p+S,a/k/n0m0w0x0|1R3l4T4Y4Z5Z6O6_6c6d7x:a!`#[Z!_$^%u%y&t&{'b'f)j*y+]+v,U,[,o-m0_0i0y1v2S3o4P4S6R7e8Y8o8z9Tl(U#s&y(},w-P-e-f0g1u4^4r:[:f:gx:k'_'p+S,a/k/n0m0|1R3l4T4Y4Z5Z6O6_6c6d7x:a!`:n&u'd(X(_+n,S,l-T-q-t.e.g0Z0f1^1b2O2d2f2v4R4e4k4t4y5U5i6^6i6o7WZ:o0z4X6`7m8_&YcORSTUjk}!S!W!]!`!m!u!y!{#O#P#Q#R#S#T#U#V#W#X#Y#[#a#d#j$Y$l%Y%]%^%a%c%d%e%g%k%v&O&S&Z&a&k&x&|'r'|)O)V*e*i*n*}+Q+p+w,Y,`,e-j-o-w.R.r/T/U/V/X/]/`/b/p/y0`0j0}2a2i2y3^3`3a3j3q5j5x6S6y7h8[8q9S9U9X9Y9Z9[9]9^9_9`9a9b9c9d9e9h9q9r9t9{9|:P:Q:kS#k`#lR1O,d&a_ORSTU`jk}!S!W!]!`!m!u!y!{#O#P#Q#R#S#T#U#V#W#X#Y#[#a#d#j#l$Y$l%Y%]%^%a%c%d%e%g%k%v&O&S&Z&a&k&x&|'r'|)O)V*e*i*n*}+Q+p+w,Y,`,d,e-j-o-w.R.r/T/U/V/X/]/`/b/p/y0`0j0}2a2i2y3^3`3a3j3q5j5x6S6y7h8[8q9S9U9X9Y9Z9[9]9^9_9`9a9b9c9d9e9h9q9r9t9{9|:P:Q:kS#f^#mT'i#h'mT#g^#mT'k#h'm&a`ORSTU`jk}!S!W!]!`!m!u!y!{#O#P#Q#R#S#T#U#V#W#X#Y#[#a#d#j#l$Y$l%Y%]%^%a%c%d%e%g%k%v&O&S&Z&a&k&x&|'r'|)O)V*e*i*n*}+Q+p+w,Y,`,d,e-j-o-w.R.r/T/U/V/X/]/`/b/p/y0`0j0}2a2i2y3^3`3a3j3q5j5x6S6y7h8[8q9S9U9X9Y9Z9[9]9^9_9`9a9b9c9d9e9h9q9r9t9{9|:P:Q:kT#k`#lQ#n`R't#l$nbORSTUjk}!S!W!]!`!m!u!y!{#O#P#Q#R#S#T#U#V#W#X#Y#a#d$Y$l%Y%]%^%a%c%d%e%g%k%v&O&Z&a&k&x&|'|)O)V*e*i*n+p+w,Y,`-j-o-w.R.r/T/U/V/X/]/`/b/y0`0j2a2y3^3`3a3q5j5x6S7h8[8q!k:i#[#j&S'r*}+Q,e/p0}2i3j6y9S9U9X9Y9Z9[9]9^9_9`9a9b9c9d9e9h9q9r9t9{9|:P:Q:k#RdOSUj}!S!W!m!{#j$Y%Y%]%^%a%c%d%e%g%k&O&a'r)V*e*i*n+p,e-j-w.r/T/U/V/X/]/`/b0}2a2y3^3`3a5j5xt#ya!x$Q$R$V(R(T(U(](q(r,V-l1V1q:h:n:o!|&w!v#c#u#w&b'x(a)U)W)Z)x){+q-Q-S-v-x.f.i.q.s1`1j1x1{2P2b2x2z4d4p4x5f5k6x7U8R9k9m9o9u9w9y9}:RQ({$TQ,p'}c0{9g9l9n9p9v9x9z:O:St#va!x$Q$R$V(R(T(U(](q(r,V-l1V1q:h:n:oS(h#x(kQ(|$UQ-^(i!|:]!v#c#u#w&b'x(a)U)W)Z)x){+q-Q-S-v-x.f.i.q.s1`1j1x1{2P2b2x2z4d4p4x5f5k6x7U8R9k9m9o9u9w9y9}:Rb:^9g9l9n9p9v9x9z:O:SQ:b:lR:c:mt#ya!x$Q$R$V(R(T(U(](q(r,V-l1V1q:h:n:o!|&w!v#c#u#w&b'x(a)U)W)Z)x){+q-Q-S-v-x.f.i.q.s1`1j1x1{2P2b2x2z4d4p4x5f5k6x7U8R9k9m9o9u9w9y9}:Rc0{9g9l9n9p9v9x9z:O:SlfOSj}!m$Y%a%d%e%g*i*n/]/`Q(`#wQ*u%nQ*v%pR1_-Q$U#za!v!x#c#u#w$Q$R$V&b'x(R(T(U(](a(q(r)U)W)Z)x){+q,V-Q-S-l-v-x.f.i.q.s1V1`1j1q1x1{2P2b2x2z4d4p4x5f5k6x7U8R9g9k9l9m9n9o9p9u9v9w9x9y9z9}:O:R:S:h:n:oQ)z${Q.h)|Q2e.gR5W2fT(j#x(kS(j#x(kT2m.o2nQ)[$cQ-](hQ-})]Q.v*VQ2}.wQ5m3OQ6{5[Q7Y5nQ7z6|Q8T7ZQ8e7{Q8t8fQ8|8uR9Q8}l(R#s&y(},w-P-e-f0g1u4^4r:[:f:g!`9u&u'd(X(_+n,S,l-T-q-t.e.g0Z0f1^1b2O2d2f2v4R4e4k4t4y5U5i6^6i6o7WZ9v0z4X6`7m8_n(T#s&y(},u,w-P-e-f0g1u4^4r:[:f:g!b9w&u'd(X(_+n,S,l-T-q-t.e.g0Z0d0f1^1b2O2d2f2v4R4e4k4t4y5U5i6^6i6o7W]9x0z4X6`6a7m8_peOSjy}!m$Y%W%a%d%e%g*i*n/]/`Q%TxR*e%^peOSjy}!m$Y%W%a%d%e%g*i*n/]/`R%TxQ*O$|R.d)wqeOSjy}!m$Y%W%a%d%e%g*i*n/]/`Q.p*TS2w.t.uW5e2t2u2v2{U7T5g5h5iU8P7S7V7WQ8i8QR8w8jQ%[yR*_%WR3U.}R7]5pS$kp$pR.Y)hQ%azR*i%bR*o%hT/^*n/`QjOQ!mST$]j!mQ'z#rR,m'zQ!YQR%s!YQ!^RU%w!^%x*zQ%x!_R*z%yQ+V&TR/r+VQ,W&yR0h,WQ,Z&{S0k,Z0lR0l,[Q+e&_R/}+eQ&]!eQ*{%zT+`&]*{Q+Y&WR/t+YQ&p!rQ+y&nU+}&p+y0cR0c,OQ'm#hR,f'mQ#l`R's#lQ#bZU'c#b*x9fQ*x9TR9f'pQ,z(YW1Y,z1Z4b6hU1Z,{,|,}S4b1[1]R6h4c#q(P#s&u&y'd(X(_(x(y(}+n,Q,R,S,l,u,v,w-P-T-e-f-q-t.e.g0Z0d0e0f0g0z1^1b1u2O2d2f2v4R4V4W4X4^4e4k4r4t4y5U5i6^6`6a6b6i6o7W7m8_:[:f:gQ-R(_U1a-R1c4fQ1c-TR4f1bQ(k#xR-_(kQ(t#|R-h(tQ1y-qR4u1yQ)u$vR.c)uQ2h.jS5Y2h6zR6z5ZQ*Q$}R.m*QQ2n.oR5_2nQ.|*[S3S.|5qR5q3UQ.T)dW2X.T2Z5O6uQ2Z.WQ5O2YR6u5PQ)i$kR.Z)iQ/`*nR3d/`WiOSj!mQ%f}Q)Q$YQ*h%aQ*j%dQ*k%eQ*m%gQ/Z*iS/^*n/`R3c/]Q$[gQ%j!RQ%m!TQ%o!UQ%q!VQ)p$qQ)v$wQ*^%[Q*s%lS/P*_*bQ/g*rQ/h*uQ/i*vS/x+b2kQ1d-VQ1e-WQ1k-]Q2^.^Q2c.eQ2|.vQ3W/RQ3b/[Y3p/z/{0R0W5aQ4g1fQ4i1hQ4l1lQ5S2`Q5V2dQ5l2}Q5r3V[6Q3o3r3v3x3y7QQ6j4hQ6m4mQ6v5QQ7X5mQ7^5sW7d6R6W6Y6[Q7o6kQ7q6nQ7v6wQ7y6{Q8S7YU8W7e7j7lQ8`7pQ8b7sQ8d7zQ8k8TS8m8Y8^Q8r8aQ8s8eQ8x8oQ8{8tQ9O8zQ9P8|R9R9QQ$emQ&d!iU)_$f$g$hQ+P&QU+s&e&f&gQ-V(eS.P)`)aQ/o+RQ/w+bS0]+t+uQ1h-ZQ2R.QQ3m/uS3s/|0RQ4O0^Q4m1mS6U3t3yQ7g6VQ8Z7iR8p8]S#ta:hR)Y$bU#|a$b:hR-g(sQ#saS&u!v)ZQ&y!xQ'd#cQ(X#uQ(_#wQ(x$QQ(y$RQ(}$VQ+n&bQ,Q9kQ,R9mQ,S9oQ,l'xQ,u(RQ,v(TQ,w(UQ-P(]Q-T(aQ-e(qQ-f(rd-q)U-v.q1{2x4x5f6x7U8RQ-t)WQ.e)xQ.g){Q0Z+qQ0d9uQ0e9wQ0f9yQ0g,VQ0z9gQ1^-QQ1b-SQ1u-lQ2O-xQ2d.fQ2f.iQ2v.sQ4R9}Q4V9lQ4W9nQ4X9pQ4^1VQ4e1`Q4k1jQ4r1qQ4t1xQ4y2PQ5U2bQ5i2zQ6^:RQ6`9zQ6a9vQ6b9xQ6i4dQ6o4pQ7W5kQ7m:OQ8_:SQ:[:hQ:f:nR:g:oT'y#r'zlgOSj}!m$Y%a%d%e%g*i*n/]/`S!oU%cQ%l!SQ%r!WQ'Q!{Q'q#jS*b%Y%]Q*f%^Q*r%kQ*|&OQ+m&aQ,j'rQ-s)VQ/W*eQ0Y+pQ1Q,eQ1s-jQ1}-wQ2u.rQ3Y/TQ3Z/UQ3]/VQ3_/XQ3f/bQ4[0}Q5T2aQ5h2yQ5w3^Q5y3`Q5z3aQ7V5jR7`5x!vZOSUj}!S!m!{$Y%Y%]%^%a%c%d%e%g%k&O&a)V*e*i*n+p-j-w.r/T/U/V/X/]/`/b2a2y3^3`3a5j5xQ!_RQ!nTQ$^kQ%u!]Q%y!`Q&t!uQ&{!yQ'R#OQ'S#PQ'T#QQ'U#RQ'V#SQ'W#TQ'X#UQ'Y#VQ'Z#WQ'[#XQ']#YQ'_#[Q'b#aQ'f#dW'p#j'r,e0}Q)j$lQ*y%vS+S&S/pQ+]&ZQ+v&kQ,U&xQ,[&|Q,_9SQ,a9UQ,o'|Q-m)OQ/k*}Q/n+QQ0_+wQ0i,YQ0m9XQ0n9YQ0o9ZQ0p9[Q0q9]Q0r9^Q0s9_Q0t9`Q0u9aQ0v9bQ0w9cQ0x9dQ0y,`Q0|9hQ1R9eQ1v-oQ2S.RQ3l9qQ3o/yQ4P0`Q4S0jQ4T9rQ4Y9tQ4Z9{Q5Z2iQ6O3jQ6R3qQ6_9|Q6c:PQ6d:QQ7e6SQ7x6yQ8Y7hQ8o8[Q8z8qQ9T!WR:a:kT!XQ!YR!aRR&U!bS&Q!b+US+R&R&YR/u+[R&z!xR&}!yT!sU$WS!rU$WU$vrs*gS&n!q!tQ+{&oQ,O&rQ.b)tS0a+z+|R4Q0b[!dR!`$s&[)r+_h!pUrs!q!t$W&o&r)t+z+|0bQ/Y*gQ/l+OQ3i/fT:X&S)sT!fR$sS!eR$sS%z!`)rS+T&S)sQ+^&[R/v+_T&X!b$tQ#h^R'v#mT'l#h'mR1P,dT([#u(dR(b#wQ-r)UQ1|-vQ2t.qQ4v1{Q5g2xQ6r4xQ7S5fQ7w6xQ8Q7UR8j8RlhOSj}!m$Y%a%d%e%g*i*n/]/`Q%ZyR*^%WV$wrs*gR.k)}R*]%UQ$opR)o$pR)e$jT%_z%bT%`z%bT/_*n/`",
+  nodeNames: "⚠ ArithOp ArithOp extends LineComment BlockComment Script ExportDeclaration export Star as VariableName from String ; default FunctionDeclaration async function VariableDefinition TypeParamList TypeDefinition ThisType this LiteralType ArithOp Number BooleanLiteral TemplateType VoidType void TypeofType typeof MemberExpression . ?. PropertyName [ TemplateString null super RegExp ] ArrayExpression Spread , } { ObjectExpression Property async get set PropertyDefinition Block : NewExpression new TypeArgList CompareOp < ) ( ArgList UnaryExpression await yield delete LogicOp BitOp ParenthesizedExpression ClassExpression class extends ClassBody MethodDeclaration Privacy static abstract override PrivatePropertyDefinition PropertyDeclaration readonly Optional TypeAnnotation Equals StaticBlock FunctionExpression ArrowFunction ParamList ParamList ArrayPattern ObjectPattern PatternProperty Privacy readonly Arrow MemberExpression PrivatePropertyName BinaryExpression ArithOp ArithOp ArithOp ArithOp BitOp CompareOp instanceof in const CompareOp BitOp BitOp BitOp LogicOp LogicOp ConditionalExpression LogicOp LogicOp AssignmentExpression UpdateOp PostfixExpression CallExpression TaggedTemplateExpression DynamicImport import ImportMeta JSXElement JSXSelfCloseEndTag JSXStartTag JSXSelfClosingTag JSXIdentifier JSXNamespacedName JSXMemberExpression JSXSpreadAttribute JSXAttribute JSXAttributeValue JSXEscape JSXEndTag JSXOpenTag JSXFragmentTag JSXText JSXEscape JSXStartCloseTag JSXCloseTag PrefixCast ArrowFunction TypeParamList SequenceExpression KeyofType keyof UniqueType unique ImportType InferredType infer TypeName ParenthesizedType FunctionSignature ParamList NewSignature IndexedType TupleType Label ArrayType ReadonlyType ObjectType MethodType PropertyType IndexSignature CallSignature TypePredicate is NewSignature new UnionType LogicOp IntersectionType LogicOp ConditionalType ParameterizedType ClassDeclaration abstract implements type VariableDeclaration let var TypeAliasDeclaration InterfaceDeclaration interface EnumDeclaration enum EnumBody NamespaceDeclaration namespace module AmbientDeclaration declare GlobalDeclaration global ClassDeclaration ClassBody MethodDeclaration AmbientFunctionDeclaration ExportGroup VariableName VariableName ImportDeclaration ImportGroup ForStatement for ForSpec ForInSpec ForOfSpec of WhileStatement while WithStatement with DoStatement do IfStatement if else SwitchStatement switch SwitchBody CaseLabel case DefaultLabel TryStatement try catch finally ReturnStatement return ThrowStatement throw BreakStatement break ContinueStatement continue DebuggerStatement debugger LabeledStatement ExpressionStatement",
+  maxTerm: 330,
   context: trackNewline,
   nodeProps: [
-    [NodeProp.group, -26,7,14,16,54,179,183,186,187,189,192,195,206,208,214,216,218,220,223,229,233,235,237,239,241,243,244,"Statement",-30,11,13,23,26,27,38,39,40,41,43,48,56,64,70,71,86,87,96,98,114,117,119,120,121,122,124,125,143,144,146,"Expression",-22,22,24,28,29,31,147,149,151,152,154,155,156,158,159,160,162,163,164,173,175,177,178,"Type",-2,75,81,"ClassItem"],
-    [NodeProp.closedBy, 37,"]",47,"}",62,")",127,"JSXSelfCloseEndTag JSXEndTag",141,"JSXEndTag"],
-    [NodeProp.openedBy, 42,"[",46,"{",61,"(",126,"JSXStartTag",136,"JSXStartTag JSXStartCloseTag"]
+    [NodeProp.group, -26,7,14,16,54,180,184,187,188,190,193,196,207,209,215,217,219,221,224,230,234,236,238,240,242,244,245,"Statement",-30,11,13,23,26,27,38,39,40,41,43,48,56,64,70,71,87,88,97,99,115,118,120,121,122,123,125,126,144,145,147,"Expression",-22,22,24,28,29,31,148,150,152,153,155,156,157,159,160,161,163,164,165,174,176,178,179,"Type",-3,75,81,86,"ClassItem"],
+    [NodeProp.closedBy, 37,"]",47,"}",62,")",128,"JSXSelfCloseEndTag JSXEndTag",142,"JSXEndTag"],
+    [NodeProp.openedBy, 42,"[",46,"{",61,"(",127,"JSXStartTag",137,"JSXStartTag JSXStartCloseTag"]
   ],
   skippedNodes: [0,4,5],
   repeatNodeCount: 28,
-  tokenData: "!Ck~R!`OX%TXY%cYZ'RZ[%c[]%T]^'R^p%Tpq%cqr'crs(kst0htu2`uv4pvw5ewx6cxy<yyz=Zz{=k{|>k|}?O}!O>k!O!P?`!P!QCl!Q!R!0[!R![!1q![!]!7a!]!^!7s!^!_!8T!_!`!9Q!`!a!9x!a!b!;o!b!c%T!c!}2`!}#O!=Q#O#P%T#P#Q!=b#Q#R!=r#R#S2`#S#T!>V#T#o2`#o#p!>g#p#q!>l#q#r!?S#r#s!?f#s$f%T$f$g%c$g#BY2`#BY#BZ!?v#BZ$IS2`$IS$I_!?v$I_$I|2`$I|$I}!B_$I}$JO!B_$JO$JT2`$JT$JU!?v$JU$KV2`$KV$KW!?v$KW&FU2`&FU&FV!?v&FV?HT2`?HT?HU!?v?HU~2`W%YR$PWO!^%T!_#o%T#p~%T,T%jg$PW'S+{OX%TXY%cYZ%TZ[%c[p%Tpq%cq!^%T!_#o%T#p$f%T$f$g%c$g#BY%T#BY#BZ%c#BZ$IS%T$IS$I_%c$I_$JT%T$JT$JU%c$JU$KV%T$KV$KW%c$KW&FU%T&FU&FV%c&FV?HT%T?HT?HU%c?HU~%T,T'YR$PW'T+{O!^%T!_#o%T#p~%T$T'jS$PW!f#{O!^%T!_!`'v!`#o%T#p~%T$O'}S#`#v$PWO!^%T!_!`(Z!`#o%T#p~%T$O(bR#`#v$PWO!^%T!_#o%T#p~%T'u(rZ$PW]!ROY(kYZ)eZr(krs*rs!^(k!^!_+U!_#O(k#O#P-b#P#o(k#o#p+U#p~(k&r)jV$PWOr)ers*Ps!^)e!^!_*a!_#o)e#o#p*a#p~)e&r*WR#z&j$PWO!^%T!_#o%T#p~%T&j*dROr*ars*ms~*a&j*rO#z&j'u*{R#z&j$PW]!RO!^%T!_#o%T#p~%T'm+ZV]!ROY+UYZ*aZr+Urs+ps#O+U#O#P+w#P~+U'm+wO#z&j]!R'm+zROr+Urs,Ts~+U'm,[U#z&j]!ROY,nZr,nrs-Vs#O,n#O#P-[#P~,n!R,sU]!ROY,nZr,nrs-Vs#O,n#O#P-[#P~,n!R-[O]!R!R-_PO~,n'u-gV$PWOr(krs-|s!^(k!^!_+U!_#o(k#o#p+U#p~(k'u.VZ#z&j$PW]!ROY.xYZ%TZr.xrs/rs!^.x!^!_,n!_#O.x#O#P0S#P#o.x#o#p,n#p~.x!Z/PZ$PW]!ROY.xYZ%TZr.xrs/rs!^.x!^!_,n!_#O.x#O#P0S#P#o.x#o#p,n#p~.x!Z/yR$PW]!RO!^%T!_#o%T#p~%T!Z0XT$PWO!^.x!^!_,n!_#o.x#o#p,n#p~.xx0mZ$PWOt%Ttu1`u!^%T!_!c%T!c!}1`!}#R%T#R#S1`#S#T%T#T#o1`#p$g%T$g~1`x1g]$PW'lpOt%Ttu1`u!Q%T!Q![1`![!^%T!_!c%T!c!}1`!}#R%T#R#S1`#S#T%T#T#o1`#p$g%T$g~1`&i2k_$PW#uS'V%k'cpOt%Ttu2`u}%T}!O3j!O!Q%T!Q![2`![!^%T!_!c%T!c!}2`!}#R%T#R#S2`#S#T%T#T#o2`#p$g%T$g~2`[3q_$PW#uSOt%Ttu3ju}%T}!O3j!O!Q%T!Q![3j![!^%T!_!c%T!c!}3j!}#R%T#R#S3j#S#T%T#T#o3j#p$g%T$g~3j$O4wS#X#v$PWO!^%T!_!`5T!`#o%T#p~%T$O5[R$PW#j#vO!^%T!_#o%T#p~%T%r5lU'u%j$PWOv%Tvw6Ow!^%T!_!`5T!`#o%T#p~%T$O6VS$PW#d#vO!^%T!_!`5T!`#o%T#p~%T'u6jZ$PW]!ROY6cYZ7]Zw6cwx*rx!^6c!^!_8T!_#O6c#O#P:T#P#o6c#o#p8T#p~6c&r7bV$PWOw7]wx*Px!^7]!^!_7w!_#o7]#o#p7w#p~7]&j7zROw7wwx*mx~7w'm8YV]!ROY8TYZ7wZw8Twx+px#O8T#O#P8o#P~8T'm8rROw8Twx8{x~8T'm9SU#z&j]!ROY9fZw9fwx-Vx#O9f#O#P9}#P~9f!R9kU]!ROY9fZw9fwx-Vx#O9f#O#P9}#P~9f!R:QPO~9f'u:YV$PWOw6cwx:ox!^6c!^!_8T!_#o6c#o#p8T#p~6c'u:xZ#z&j$PW]!ROY;kYZ%TZw;kwx/rx!^;k!^!_9f!_#O;k#O#P<e#P#o;k#o#p9f#p~;k!Z;rZ$PW]!ROY;kYZ%TZw;kwx/rx!^;k!^!_9f!_#O;k#O#P<e#P#o;k#o#p9f#p~;k!Z<jT$PWO!^;k!^!_9f!_#o;k#o#p9f#p~;k%V=QR!`$}$PWO!^%T!_#o%T#p~%TZ=bR!_R$PWO!^%T!_#o%T#p~%T%R=tU'W!R#Y#v$PWOz%Tz{>W{!^%T!_!`5T!`#o%T#p~%T$O>_S#V#v$PWO!^%T!_!`5T!`#o%T#p~%T$u>rSi$m$PWO!^%T!_!`5T!`#o%T#p~%T&i?VR}&a$PWO!^%T!_#o%T#p~%T&i?gVr%n$PWO!O%T!O!P?|!P!Q%T!Q![@r![!^%T!_#o%T#p~%Ty@RT$PWO!O%T!O!P@b!P!^%T!_#o%T#p~%Ty@iR|q$PWO!^%T!_#o%T#p~%Ty@yZ$PWjqO!Q%T!Q![@r![!^%T!_!g%T!g!hAl!h#R%T#R#S@r#S#X%T#X#YAl#Y#o%T#p~%TyAqZ$PWO{%T{|Bd|}%T}!OBd!O!Q%T!Q![CO![!^%T!_#R%T#R#SCO#S#o%T#p~%TyBiV$PWO!Q%T!Q![CO![!^%T!_#R%T#R#SCO#S#o%T#p~%TyCVV$PWjqO!Q%T!Q![CO![!^%T!_#R%T#R#SCO#S#o%T#p~%T,TCs`$PW#W#vOYDuYZ%TZzDuz{Jl{!PDu!P!Q!-e!Q!^Du!^!_Fx!_!`!.^!`!a!/]!a!}Du!}#OHq#O#PJQ#P#oDu#o#pFx#p~DuXD|[$PWyPOYDuYZ%TZ!PDu!P!QEr!Q!^Du!^!_Fx!_!}Du!}#OHq#O#PJQ#P#oDu#o#pFx#p~DuXEy_$PWyPO!^%T!_#Z%T#Z#[Er#[#]%T#]#^Er#^#a%T#a#bEr#b#g%T#g#hEr#h#i%T#i#jEr#j#m%T#m#nEr#n#o%T#p~%TPF}VyPOYFxZ!PFx!P!QGd!Q!}Fx!}#OG{#O#PHh#P~FxPGiUyP#Z#[Gd#]#^Gd#a#bGd#g#hGd#i#jGd#m#nGdPHOTOYG{Z#OG{#O#PH_#P#QFx#Q~G{PHbQOYG{Z~G{PHkQOYFxZ~FxXHvY$PWOYHqYZ%TZ!^Hq!^!_G{!_#OHq#O#PIf#P#QDu#Q#oHq#o#pG{#p~HqXIkV$PWOYHqYZ%TZ!^Hq!^!_G{!_#oHq#o#pG{#p~HqXJVV$PWOYDuYZ%TZ!^Du!^!_Fx!_#oDu#o#pFx#p~Du,TJs^$PWyPOYJlYZKoZzJlz{NQ{!PJl!P!Q!,R!Q!^Jl!^!_!!]!_!}Jl!}#O!'|#O#P!+a#P#oJl#o#p!!]#p~Jl,TKtV$PWOzKoz{LZ{!^Ko!^!_M]!_#oKo#o#pM]#p~Ko,TL`X$PWOzKoz{LZ{!PKo!P!QL{!Q!^Ko!^!_M]!_#oKo#o#pM]#p~Ko,TMSR$PWT+{O!^%T!_#o%T#p~%T+{M`ROzM]z{Mi{~M]+{MlTOzM]z{Mi{!PM]!P!QM{!Q~M]+{NQOT+{,TNX^$PWyPOYJlYZKoZzJlz{NQ{!PJl!P!Q! T!Q!^Jl!^!_!!]!_!}Jl!}#O!'|#O#P!+a#P#oJl#o#p!!]#p~Jl,T! ^_$PWT+{yPO!^%T!_#Z%T#Z#[Er#[#]%T#]#^Er#^#a%T#a#bEr#b#g%T#g#hEr#h#i%T#i#jEr#j#m%T#m#nEr#n#o%T#p~%T+{!!bYyPOY!!]YZM]Zz!!]z{!#Q{!P!!]!P!Q!&x!Q!}!!]!}#O!$`#O#P!&f#P~!!]+{!#VYyPOY!!]YZM]Zz!!]z{!#Q{!P!!]!P!Q!#u!Q!}!!]!}#O!$`#O#P!&f#P~!!]+{!#|UT+{yP#Z#[Gd#]#^Gd#a#bGd#g#hGd#i#jGd#m#nGd+{!$cWOY!$`YZM]Zz!$`z{!${{#O!$`#O#P!&S#P#Q!!]#Q~!$`+{!%OYOY!$`YZM]Zz!$`z{!${{!P!$`!P!Q!%n!Q#O!$`#O#P!&S#P#Q!!]#Q~!$`+{!%sTT+{OYG{Z#OG{#O#PH_#P#QFx#Q~G{+{!&VTOY!$`YZM]Zz!$`z{!${{~!$`+{!&iTOY!!]YZM]Zz!!]z{!#Q{~!!]+{!&}_yPOzM]z{Mi{#ZM]#Z#[!&x#[#]M]#]#^!&x#^#aM]#a#b!&x#b#gM]#g#h!&x#h#iM]#i#j!&x#j#mM]#m#n!&x#n~M],T!(R[$PWOY!'|YZKoZz!'|z{!(w{!^!'|!^!_!$`!_#O!'|#O#P!*o#P#QJl#Q#o!'|#o#p!$`#p~!'|,T!(|^$PWOY!'|YZKoZz!'|z{!(w{!P!'|!P!Q!)x!Q!^!'|!^!_!$`!_#O!'|#O#P!*o#P#QJl#Q#o!'|#o#p!$`#p~!'|,T!*PY$PWT+{OYHqYZ%TZ!^Hq!^!_G{!_#OHq#O#PIf#P#QDu#Q#oHq#o#pG{#p~Hq,T!*tX$PWOY!'|YZKoZz!'|z{!(w{!^!'|!^!_!$`!_#o!'|#o#p!$`#p~!'|,T!+fX$PWOYJlYZKoZzJlz{NQ{!^Jl!^!_!!]!_#oJl#o#p!!]#p~Jl,T!,Yc$PWyPOzKoz{LZ{!^Ko!^!_M]!_#ZKo#Z#[!,R#[#]Ko#]#^!,R#^#aKo#a#b!,R#b#gKo#g#h!,R#h#iKo#i#j!,R#j#mKo#m#n!,R#n#oKo#o#pM]#p~Ko,T!-lV$PWS+{OY!-eYZ%TZ!^!-e!^!_!.R!_#o!-e#o#p!.R#p~!-e+{!.WQS+{OY!.RZ~!.R$P!.g[$PW#j#vyPOYDuYZ%TZ!PDu!P!QEr!Q!^Du!^!_Fx!_!}Du!}#OHq#O#PJQ#P#oDu#o#pFx#p~Du]!/f[#rS$PWyPOYDuYZ%TZ!PDu!P!QEr!Q!^Du!^!_Fx!_!}Du!}#OHq#O#PJQ#P#oDu#o#pFx#p~Duy!0cd$PWjqO!O%T!O!P@r!P!Q%T!Q![!1q![!^%T!_!g%T!g!hAl!h#R%T#R#S!1q#S#U%T#U#V!3X#V#X%T#X#YAl#Y#b%T#b#c!2w#c#d!4g#d#l%T#l#m!5o#m#o%T#p~%Ty!1x_$PWjqO!O%T!O!P@r!P!Q%T!Q![!1q![!^%T!_!g%T!g!hAl!h#R%T#R#S!1q#S#X%T#X#YAl#Y#b%T#b#c!2w#c#o%T#p~%Ty!3OR$PWjqO!^%T!_#o%T#p~%Ty!3^W$PWO!Q%T!Q!R!3v!R!S!3v!S!^%T!_#R%T#R#S!3v#S#o%T#p~%Ty!3}W$PWjqO!Q%T!Q!R!3v!R!S!3v!S!^%T!_#R%T#R#S!3v#S#o%T#p~%Ty!4lV$PWO!Q%T!Q!Y!5R!Y!^%T!_#R%T#R#S!5R#S#o%T#p~%Ty!5YV$PWjqO!Q%T!Q!Y!5R!Y!^%T!_#R%T#R#S!5R#S#o%T#p~%Ty!5tZ$PWO!Q%T!Q![!6g![!^%T!_!c%T!c!i!6g!i#R%T#R#S!6g#S#T%T#T#Z!6g#Z#o%T#p~%Ty!6nZ$PWjqO!Q%T!Q![!6g![!^%T!_!c%T!c!i!6g!i#R%T#R#S!6g#S#T%T#T#Z!6g#Z#o%T#p~%T%w!7jR!XV$PW#h%hO!^%T!_#o%T#p~%T!P!7zR^w$PWO!^%T!_#o%T#p~%T+c!8`R'[d!]%Y#s&s'yP!P!Q!8i!^!_!8n!_!`!8{W!8nO$RW#v!8sP#Z#v!_!`!8v#v!8{O#j#v#v!9QO#[#v%w!9XT!w%o$PWO!^%T!_!`'v!`!a!9h!a#o%T#p~%T$P!9oR#R#w$PWO!^%T!_#o%T#p~%T%w!:TT'Z!s#[#v#|S$PWO!^%T!_!`!:d!`!a!:t!a#o%T#p~%T$O!:kR#[#v$PWO!^%T!_#o%T#p~%T$O!:{T#Z#v$PWO!^%T!_!`5T!`!a!;[!a#o%T#p~%T$O!;cS#Z#v$PWO!^%T!_!`5T!`#o%T#p~%T%w!;vV'm%o$PWO!O%T!O!P!<]!P!^%T!_!a%T!a!b!<m!b#o%T#p~%T$`!<dRs$W$PWO!^%T!_#o%T#p~%T$O!<tS$PW#e#vO!^%T!_!`5T!`#o%T#p~%T&e!=XRu&]$PWO!^%T!_#o%T#p~%TZ!=iRzR$PWO!^%T!_#o%T#p~%T$O!=yS#b#v$PWO!^%T!_!`5T!`#o%T#p~%T$P!>^R$PW'`#wO!^%T!_#o%T#p~%T~!>lO!P~%r!>sT't%j$PWO!^%T!_!`5T!`#o%T#p#q!<m#q~%T$u!?]R!O$k$PW'bQO!^%T!_#o%T#p~%TX!?mR!gP$PWO!^%T!_#o%T#p~%T,T!@Tr$PW'S+{#uS'V%k'cpOX%TXY%cYZ%TZ[%c[p%Tpq%cqt%Ttu2`u}%T}!O3j!O!Q%T!Q![2`![!^%T!_!c%T!c!}2`!}#R%T#R#S2`#S#T%T#T#o2`#p$f%T$f$g%c$g#BY2`#BY#BZ!?v#BZ$IS2`$IS$I_!?v$I_$JT2`$JT$JU!?v$JU$KV2`$KV$KW!?v$KW&FU2`&FU&FV!?v&FV?HT2`?HT?HU!?v?HU~2`,T!Bl_$PW'T+{#uS'V%k'cpOt%Ttu2`u}%T}!O3j!O!Q%T!Q![2`![!^%T!_!c%T!c!}2`!}#R%T#R#S2`#S#T%T#T#o2`#p$g%T$g~2`",
+  tokenData: "!C}~R!`OX%TXY%cYZ'RZ[%c[]%T]^'R^p%Tpq%cqr'crs(kst0htu2`uv4pvw5ewx6cxy<yyz=Zz{=k{|>k|}?O}!O>k!O!P?`!P!QCl!Q!R!0[!R![!1q![!]!7s!]!^!8V!^!_!8g!_!`!9d!`!a!:[!a!b!<R!b!c%T!c!}2`!}#O!=d#O#P%T#P#Q!=t#Q#R!>U#R#S2`#S#T!>i#T#o2`#o#p!>y#p#q!?O#q#r!?f#r#s!?x#s$f%T$f$g%c$g#BY2`#BY#BZ!@Y#BZ$IS2`$IS$I_!@Y$I_$I|2`$I|$I}!Bq$I}$JO!Bq$JO$JT2`$JT$JU!@Y$JU$KV2`$KV$KW!@Y$KW&FU2`&FU&FV!@Y&FV?HT2`?HT?HU!@Y?HU~2`W%YR$QWO!^%T!_#o%T#p~%T,T%jg$QW'T+{OX%TXY%cYZ%TZ[%c[p%Tpq%cq!^%T!_#o%T#p$f%T$f$g%c$g#BY%T#BY#BZ%c#BZ$IS%T$IS$I_%c$I_$JT%T$JT$JU%c$JU$KV%T$KV$KW%c$KW&FU%T&FU&FV%c&FV?HT%T?HT?HU%c?HU~%T,T'YR$QW'U+{O!^%T!_#o%T#p~%T$T'jS$QW!f#{O!^%T!_!`'v!`#o%T#p~%T$O'}S#a#v$QWO!^%T!_!`(Z!`#o%T#p~%T$O(bR#a#v$QWO!^%T!_#o%T#p~%T'u(rZ$QW]!ROY(kYZ)eZr(krs*rs!^(k!^!_+U!_#O(k#O#P-b#P#o(k#o#p+U#p~(k&r)jV$QWOr)ers*Ps!^)e!^!_*a!_#o)e#o#p*a#p~)e&r*WR#{&j$QWO!^%T!_#o%T#p~%T&j*dROr*ars*ms~*a&j*rO#{&j'u*{R#{&j$QW]!RO!^%T!_#o%T#p~%T'm+ZV]!ROY+UYZ*aZr+Urs+ps#O+U#O#P+w#P~+U'm+wO#{&j]!R'm+zROr+Urs,Ts~+U'm,[U#{&j]!ROY,nZr,nrs-Vs#O,n#O#P-[#P~,n!R,sU]!ROY,nZr,nrs-Vs#O,n#O#P-[#P~,n!R-[O]!R!R-_PO~,n'u-gV$QWOr(krs-|s!^(k!^!_+U!_#o(k#o#p+U#p~(k'u.VZ#{&j$QW]!ROY.xYZ%TZr.xrs/rs!^.x!^!_,n!_#O.x#O#P0S#P#o.x#o#p,n#p~.x!Z/PZ$QW]!ROY.xYZ%TZr.xrs/rs!^.x!^!_,n!_#O.x#O#P0S#P#o.x#o#p,n#p~.x!Z/yR$QW]!RO!^%T!_#o%T#p~%T!Z0XT$QWO!^.x!^!_,n!_#o.x#o#p,n#p~.xy0mZ$QWOt%Ttu1`u!^%T!_!c%T!c!}1`!}#R%T#R#S1`#S#T%T#T#o1`#p$g%T$g~1`y1g]$QW'mqOt%Ttu1`u!Q%T!Q![1`![!^%T!_!c%T!c!}1`!}#R%T#R#S1`#S#T%T#T#o1`#p$g%T$g~1`&i2k_$QW#vS'W%k'dpOt%Ttu2`u}%T}!O3j!O!Q%T!Q![2`![!^%T!_!c%T!c!}2`!}#R%T#R#S2`#S#T%T#T#o2`#p$g%T$g~2`[3q_$QW#vSOt%Ttu3ju}%T}!O3j!O!Q%T!Q![3j![!^%T!_!c%T!c!}3j!}#R%T#R#S3j#S#T%T#T#o3j#p$g%T$g~3j$O4wS#Y#v$QWO!^%T!_!`5T!`#o%T#p~%T$O5[R$QW#k#vO!^%T!_#o%T#p~%T%r5lU'v%j$QWOv%Tvw6Ow!^%T!_!`5T!`#o%T#p~%T$O6VS$QW#e#vO!^%T!_!`5T!`#o%T#p~%T'u6jZ$QW]!ROY6cYZ7]Zw6cwx*rx!^6c!^!_8T!_#O6c#O#P:T#P#o6c#o#p8T#p~6c&r7bV$QWOw7]wx*Px!^7]!^!_7w!_#o7]#o#p7w#p~7]&j7zROw7wwx*mx~7w'm8YV]!ROY8TYZ7wZw8Twx+px#O8T#O#P8o#P~8T'm8rROw8Twx8{x~8T'm9SU#{&j]!ROY9fZw9fwx-Vx#O9f#O#P9}#P~9f!R9kU]!ROY9fZw9fwx-Vx#O9f#O#P9}#P~9f!R:QPO~9f'u:YV$QWOw6cwx:ox!^6c!^!_8T!_#o6c#o#p8T#p~6c'u:xZ#{&j$QW]!ROY;kYZ%TZw;kwx/rx!^;k!^!_9f!_#O;k#O#P<e#P#o;k#o#p9f#p~;k!Z;rZ$QW]!ROY;kYZ%TZw;kwx/rx!^;k!^!_9f!_#O;k#O#P<e#P#o;k#o#p9f#p~;k!Z<jT$QWO!^;k!^!_9f!_#o;k#o#p9f#p~;k%V=QR!`$}$QWO!^%T!_#o%T#p~%TZ=bR!_R$QWO!^%T!_#o%T#p~%T%R=tU'X!R#Z#v$QWOz%Tz{>W{!^%T!_!`5T!`#o%T#p~%T$O>_S#W#v$QWO!^%T!_!`5T!`#o%T#p~%T$u>rSi$m$QWO!^%T!_!`5T!`#o%T#p~%T&i?VR}&a$QWO!^%T!_#o%T#p~%T&i?gVr%n$QWO!O%T!O!P?|!P!Q%T!Q![@r![!^%T!_#o%T#p~%Ty@RT$QWO!O%T!O!P@b!P!^%T!_#o%T#p~%Ty@iR|q$QWO!^%T!_#o%T#p~%Ty@yZ$QWjqO!Q%T!Q![@r![!^%T!_!g%T!g!hAl!h#R%T#R#S@r#S#X%T#X#YAl#Y#o%T#p~%TyAqZ$QWO{%T{|Bd|}%T}!OBd!O!Q%T!Q![CO![!^%T!_#R%T#R#SCO#S#o%T#p~%TyBiV$QWO!Q%T!Q![CO![!^%T!_#R%T#R#SCO#S#o%T#p~%TyCVV$QWjqO!Q%T!Q![CO![!^%T!_#R%T#R#SCO#S#o%T#p~%T,TCs`$QW#X#vOYDuYZ%TZzDuz{Jl{!PDu!P!Q!-e!Q!^Du!^!_Fx!_!`!.^!`!a!/]!a!}Du!}#OHq#O#PJQ#P#oDu#o#pFx#p~DuXD|[$QWyPOYDuYZ%TZ!PDu!P!QEr!Q!^Du!^!_Fx!_!}Du!}#OHq#O#PJQ#P#oDu#o#pFx#p~DuXEy_$QWyPO!^%T!_#Z%T#Z#[Er#[#]%T#]#^Er#^#a%T#a#bEr#b#g%T#g#hEr#h#i%T#i#jEr#j#m%T#m#nEr#n#o%T#p~%TPF}VyPOYFxZ!PFx!P!QGd!Q!}Fx!}#OG{#O#PHh#P~FxPGiUyP#Z#[Gd#]#^Gd#a#bGd#g#hGd#i#jGd#m#nGdPHOTOYG{Z#OG{#O#PH_#P#QFx#Q~G{PHbQOYG{Z~G{PHkQOYFxZ~FxXHvY$QWOYHqYZ%TZ!^Hq!^!_G{!_#OHq#O#PIf#P#QDu#Q#oHq#o#pG{#p~HqXIkV$QWOYHqYZ%TZ!^Hq!^!_G{!_#oHq#o#pG{#p~HqXJVV$QWOYDuYZ%TZ!^Du!^!_Fx!_#oDu#o#pFx#p~Du,TJs^$QWyPOYJlYZKoZzJlz{NQ{!PJl!P!Q!,R!Q!^Jl!^!_!!]!_!}Jl!}#O!'|#O#P!+a#P#oJl#o#p!!]#p~Jl,TKtV$QWOzKoz{LZ{!^Ko!^!_M]!_#oKo#o#pM]#p~Ko,TL`X$QWOzKoz{LZ{!PKo!P!QL{!Q!^Ko!^!_M]!_#oKo#o#pM]#p~Ko,TMSR$QWT+{O!^%T!_#o%T#p~%T+{M`ROzM]z{Mi{~M]+{MlTOzM]z{Mi{!PM]!P!QM{!Q~M]+{NQOT+{,TNX^$QWyPOYJlYZKoZzJlz{NQ{!PJl!P!Q! T!Q!^Jl!^!_!!]!_!}Jl!}#O!'|#O#P!+a#P#oJl#o#p!!]#p~Jl,T! ^_$QWT+{yPO!^%T!_#Z%T#Z#[Er#[#]%T#]#^Er#^#a%T#a#bEr#b#g%T#g#hEr#h#i%T#i#jEr#j#m%T#m#nEr#n#o%T#p~%T+{!!bYyPOY!!]YZM]Zz!!]z{!#Q{!P!!]!P!Q!&x!Q!}!!]!}#O!$`#O#P!&f#P~!!]+{!#VYyPOY!!]YZM]Zz!!]z{!#Q{!P!!]!P!Q!#u!Q!}!!]!}#O!$`#O#P!&f#P~!!]+{!#|UT+{yP#Z#[Gd#]#^Gd#a#bGd#g#hGd#i#jGd#m#nGd+{!$cWOY!$`YZM]Zz!$`z{!${{#O!$`#O#P!&S#P#Q!!]#Q~!$`+{!%OYOY!$`YZM]Zz!$`z{!${{!P!$`!P!Q!%n!Q#O!$`#O#P!&S#P#Q!!]#Q~!$`+{!%sTT+{OYG{Z#OG{#O#PH_#P#QFx#Q~G{+{!&VTOY!$`YZM]Zz!$`z{!${{~!$`+{!&iTOY!!]YZM]Zz!!]z{!#Q{~!!]+{!&}_yPOzM]z{Mi{#ZM]#Z#[!&x#[#]M]#]#^!&x#^#aM]#a#b!&x#b#gM]#g#h!&x#h#iM]#i#j!&x#j#mM]#m#n!&x#n~M],T!(R[$QWOY!'|YZKoZz!'|z{!(w{!^!'|!^!_!$`!_#O!'|#O#P!*o#P#QJl#Q#o!'|#o#p!$`#p~!'|,T!(|^$QWOY!'|YZKoZz!'|z{!(w{!P!'|!P!Q!)x!Q!^!'|!^!_!$`!_#O!'|#O#P!*o#P#QJl#Q#o!'|#o#p!$`#p~!'|,T!*PY$QWT+{OYHqYZ%TZ!^Hq!^!_G{!_#OHq#O#PIf#P#QDu#Q#oHq#o#pG{#p~Hq,T!*tX$QWOY!'|YZKoZz!'|z{!(w{!^!'|!^!_!$`!_#o!'|#o#p!$`#p~!'|,T!+fX$QWOYJlYZKoZzJlz{NQ{!^Jl!^!_!!]!_#oJl#o#p!!]#p~Jl,T!,Yc$QWyPOzKoz{LZ{!^Ko!^!_M]!_#ZKo#Z#[!,R#[#]Ko#]#^!,R#^#aKo#a#b!,R#b#gKo#g#h!,R#h#iKo#i#j!,R#j#mKo#m#n!,R#n#oKo#o#pM]#p~Ko,T!-lV$QWS+{OY!-eYZ%TZ!^!-e!^!_!.R!_#o!-e#o#p!.R#p~!-e+{!.WQS+{OY!.RZ~!.R$P!.g[$QW#k#vyPOYDuYZ%TZ!PDu!P!QEr!Q!^Du!^!_Fx!_!}Du!}#OHq#O#PJQ#P#oDu#o#pFx#p~Du]!/f[#sS$QWyPOYDuYZ%TZ!PDu!P!QEr!Q!^Du!^!_Fx!_!}Du!}#OHq#O#PJQ#P#oDu#o#pFx#p~Duy!0cd$QWjqO!O%T!O!P@r!P!Q%T!Q![!1q![!^%T!_!g%T!g!hAl!h#R%T#R#S!1q#S#U%T#U#V!3X#V#X%T#X#YAl#Y#b%T#b#c!2w#c#d!4m#d#l%T#l#m!5{#m#o%T#p~%Ty!1x_$QWjqO!O%T!O!P@r!P!Q%T!Q![!1q![!^%T!_!g%T!g!hAl!h#R%T#R#S!1q#S#X%T#X#YAl#Y#b%T#b#c!2w#c#o%T#p~%Ty!3OR$QWjqO!^%T!_#o%T#p~%Ty!3^W$QWO!Q%T!Q!R!3v!R!S!3v!S!^%T!_#R%T#R#S!3v#S#o%T#p~%Ty!3}Y$QWjqO!Q%T!Q!R!3v!R!S!3v!S!^%T!_#R%T#R#S!3v#S#b%T#b#c!2w#c#o%T#p~%Ty!4rV$QWO!Q%T!Q!Y!5X!Y!^%T!_#R%T#R#S!5X#S#o%T#p~%Ty!5`X$QWjqO!Q%T!Q!Y!5X!Y!^%T!_#R%T#R#S!5X#S#b%T#b#c!2w#c#o%T#p~%Ty!6QZ$QWO!Q%T!Q![!6s![!^%T!_!c%T!c!i!6s!i#R%T#R#S!6s#S#T%T#T#Z!6s#Z#o%T#p~%Ty!6z]$QWjqO!Q%T!Q![!6s![!^%T!_!c%T!c!i!6s!i#R%T#R#S!6s#S#T%T#T#Z!6s#Z#b%T#b#c!2w#c#o%T#p~%T%w!7|R!XV$QW#i%hO!^%T!_#o%T#p~%T!P!8^R^w$QWO!^%T!_#o%T#p~%T+c!8rR']d!]%Y#t&s'zP!P!Q!8{!^!_!9Q!_!`!9_W!9QO$SW#v!9VP#[#v!_!`!9Y#v!9_O#k#v#v!9dO#]#v%w!9kT!w%o$QWO!^%T!_!`'v!`!a!9z!a#o%T#p~%T$P!:RR#S#w$QWO!^%T!_#o%T#p~%T%w!:gT'[!s#]#v#}S$QWO!^%T!_!`!:v!`!a!;W!a#o%T#p~%T$O!:}R#]#v$QWO!^%T!_#o%T#p~%T$O!;_T#[#v$QWO!^%T!_!`5T!`!a!;n!a#o%T#p~%T$O!;uS#[#v$QWO!^%T!_!`5T!`#o%T#p~%T%w!<YV'n%o$QWO!O%T!O!P!<o!P!^%T!_!a%T!a!b!=P!b#o%T#p~%T$`!<vRs$W$QWO!^%T!_#o%T#p~%T$O!=WS$QW#f#vO!^%T!_!`5T!`#o%T#p~%T&e!=kRu&]$QWO!^%T!_#o%T#p~%TZ!={RzR$QWO!^%T!_#o%T#p~%T$O!>]S#c#v$QWO!^%T!_!`5T!`#o%T#p~%T$P!>pR$QW'a#wO!^%T!_#o%T#p~%T~!?OO!P~%r!?VT'u%j$QWO!^%T!_!`5T!`#o%T#p#q!=P#q~%T$u!?oR!O$k$QW'cQO!^%T!_#o%T#p~%TX!@PR!gP$QWO!^%T!_#o%T#p~%T,T!@gr$QW'T+{#vS'W%k'dpOX%TXY%cYZ%TZ[%c[p%Tpq%cqt%Ttu2`u}%T}!O3j!O!Q%T!Q![2`![!^%T!_!c%T!c!}2`!}#R%T#R#S2`#S#T%T#T#o2`#p$f%T$f$g%c$g#BY2`#BY#BZ!@Y#BZ$IS2`$IS$I_!@Y$I_$JT2`$JT$JU!@Y$JU$KV2`$KV$KW!@Y$KW&FU2`&FU&FV!@Y&FV?HT2`?HT?HU!@Y?HU~2`,T!CO_$QW'U+{#vS'W%k'dpOt%Ttu2`u}%T}!O3j!O!Q%T!Q![2`![!^%T!_!c%T!c!}2`!}#R%T#R#S2`#S#T%T#T#o2`#p$g%T$g~2`",
   tokenizers: [noSemicolon, incdecToken, template, 0, 1, 2, 3, 4, 5, 6, 7, 8, insertSemicolon],
   topRules: {"Script":[0,6]},
-  dialects: {jsx: 11230, ts: 11232},
-  dynamicPrecedences: {"144":1,"171":1},
-  specialized: [{term: 283, get: (value, stack) => (tsExtends(value, stack) << 1)},{term: 283, get: value => spec_identifier$1[value] || -1},{term: 295, get: value => spec_word[value] || -1},{term: 59, get: value => spec_LessThan[value] || -1}],
-  tokenPrec: 11253
+  dialects: {jsx: 11282, ts: 11284},
+  dynamicPrecedences: {"145":1,"172":1},
+  specialized: [{term: 284, get: (value, stack) => (tsExtends(value, stack) << 1)},{term: 284, get: value => spec_identifier$1[value] || -1},{term: 296, get: value => spec_word[value] || -1},{term: 59, get: value => spec_LessThan[value] || -1}],
+  tokenPrec: 11305
 });
 
 /**
@@ -26997,7 +27204,7 @@ const insertNewlineContinueMarkup = ({ state, dispatch }) => {
         if (inner.to - inner.spaceAfter.length > pos - line.from)
             return dont = { range };
         // Empty line in list
-        if (inner.item && pos >= (inner.to - inner.spaceAfter.length) && !/\S/.test(line.text.slice(inner.to, pos - line.from))) {
+        if (inner.item && pos >= (inner.to - inner.spaceAfter.length) && !/\S/.test(line.text.slice(inner.to))) {
             // First list item or blank line before: delete a level of markup
             if (inner.node.firstChild.to >= pos ||
                 line.from > 0 && !/[^\s>]/.test(doc.lineAt(line.from - 1).text)) {
@@ -27090,7 +27297,7 @@ const deleteMarkupBackward = ({ state, dispatch }) => {
             let context = getContext(contextNodeForDelete(tree, pos), line.text, doc);
             if (context.length) {
                 let inner = context[context.length - 1];
-                let spaceEnd = inner.to - inner.spaceAfter.length + (inner.node.name == "OrderedList" ? 0 : 1);
+                let spaceEnd = inner.to - inner.spaceAfter.length + (inner.spaceAfter ? 1 : 0);
                 // Delete extra trailing space after markup
                 if (pos - line.from > spaceEnd && !/\S/.test(line.text.slice(spaceEnd, pos - line.from)))
                     return { range: EditorSelection.cursor(line.from + spaceEnd),
@@ -27144,7 +27351,7 @@ function markdown(config = {}) {
     let codeParser = codeLanguages || defaultCode ? getCodeParser(codeLanguages || [], defaultCode) : undefined;
     extensions.push(parseCode({ codeParser, htmlParser: htmlNoMatch.language.parser }));
     if (addKeymap)
-        support.push(Prec.extend(keymap.of(markdownKeymap)));
+        support.push(Prec.high(keymap.of(markdownKeymap)));
     return new LanguageSupport(mkLang(parser.configure(extensions)), support);
 }
 
