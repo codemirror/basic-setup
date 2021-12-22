@@ -9,7 +9,6 @@ import {
     highlightSpecialChars,
     drawSelection,
     highlightActiveLine,
-    placeholder,
     Decoration,
     ViewUpdate,
     ViewPlugin,
@@ -34,7 +33,8 @@ import { html, htmlLanguage } from "@codemirror/lang-html"
 import { javascript, javascriptLanguage } from "@codemirror/lang-javascript"
 import { sql, PostgreSQL } from "@codemirror/lang-sql"
 import { python, pythonLanguage } from "@codemirror/lang-python"
-import {collab} from "@codemirror/collab"
+import { collab } from "@codemirror/collab"
+import { placeholder } from "./placeholder"
 
 export {
     Facet,

@@ -3157,12 +3157,6 @@ Configuration options.
 config?: SpecialCharConfig): Extension;
 
 /**
-Extension that enables a placeholder—a piece of example content
-to show when the editor is empty.
-*/
-declare function placeholder(content: string | HTMLElement): Extension;
-
-/**
 A language object manages parsing and per-language
 [metadata](https://codemirror.net/6/docs/ref/#state.EditorState.languageDataAt). Parse data is
 managed as a [Lezer](https://lezer.codemirror.net) tree. You'll
@@ -5165,5 +5159,7 @@ declare type CollabConfig = {
 Create an instance of the collaborative editing plugin.
 */
 declare function collab(config?: CollabConfig): Extension;
+
+declare function placeholder(content: string | HTMLElement): Extension;
 
 export { Annotation, Compartment, Decoration, EditorSelection, EditorState, EditorView, Facet, HighlightStyle, NodeProp, PostgreSQL, SelectionRange, StateEffect, StateField, StreamLanguage, Text, Transaction, TreeCursor, ViewPlugin, ViewUpdate, WidgetType, index as autocomplete, bracketMatching, closeBrackets, closeBracketsKeymap, collab, combineConfig, commentKeymap, completionKeymap, defaultHighlightStyle, defaultKeymap, drawSelection, foldGutter, foldKeymap, highlightSelectionMatches, highlightSpecialChars, history, historyKeymap, html, htmlLanguage, indentLess, indentMore, indentOnInput, indentUnit, javascript, javascriptLanguage, julia as julia_andrey, julia$1 as julia_legacy, keymap, lineNumbers, markdown, markdownLanguage, parseCode, parseMixed, placeholder, python, pythonLanguage, rectangularSelection, searchKeymap, sql, syntaxTree, tags };
