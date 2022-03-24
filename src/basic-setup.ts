@@ -2,7 +2,7 @@ import {keymap, highlightSpecialChars, drawSelection, highlightActiveLine, dropC
 import {Extension, EditorState} from "@codemirror/state"
 import {history, historyKeymap} from "@codemirror/history"
 import {foldGutter, foldKeymap} from "@codemirror/fold"
-import {indentOnInput} from "@codemirror/language"
+import {defaultHighlightStyle, syntaxHighlighting, indentOnInput} from "@codemirror/language"
 import {lineNumbers, highlightActiveLineGutter} from "@codemirror/gutter"
 import {defaultKeymap} from "@codemirror/commands"
 import {bracketMatching} from "@codemirror/matchbrackets"
@@ -11,7 +11,6 @@ import {searchKeymap, highlightSelectionMatches} from "@codemirror/search"
 import {autocompletion, completionKeymap} from "@codemirror/autocomplete"
 import {commentKeymap} from "@codemirror/comment"
 import {rectangularSelection} from "@codemirror/rectangular-selection"
-import {defaultHighlightStyle} from "@codemirror/highlight"
 import {lintKeymap} from "@codemirror/lint"
 
 /// This is an extension value that just pulls together a whole lot of
@@ -30,7 +29,7 @@ import {lintKeymap} from "@codemirror/lint"
 ///  - [drop cursor](#view.dropCursor)
 ///  - [multiple selections](#state.EditorState^allowMultipleSelections)
 ///  - [reindentation on input](#language.indentOnInput)
-///  - [the default highlight style](#highlight.defaultHighlightStyle) (as fallback)
+///  - [the default highlight style](#language.defaultHighlightStyle) (as fallback)
 ///  - [bracket matching](#matchbrackets.bracketMatching)
 ///  - [bracket closing](#closebrackets.closeBrackets)
 ///  - [autocompletion](#autocomplete.autocompletion)
@@ -60,7 +59,7 @@ export const basicSetup: Extension = [
   dropCursor(),
   EditorState.allowMultipleSelections.of(true),
   indentOnInput(),
-  defaultHighlightStyle.fallback,
+  syntaxHighlighting(defaultHighlightStyle, {fallback: true}),
   bracketMatching(),
   closeBrackets(),
   autocompletion(),
