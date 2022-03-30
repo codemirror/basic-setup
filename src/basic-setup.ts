@@ -10,7 +10,7 @@ import {closeBrackets, closeBracketsKeymap} from "@codemirror/closebrackets"
 import {searchKeymap, highlightSelectionMatches} from "@codemirror/search"
 import {autocompletion, completionKeymap} from "@codemirror/autocomplete"
 import {commentKeymap} from "@codemirror/comment"
-import {rectangularSelection} from "@codemirror/rectangular-selection"
+import {rectangularSelection, crosshairCursor} from "@codemirror/rectangular-selection"
 import {lintKeymap} from "@codemirror/lint"
 
 /// This is an extension value that just pulls together a whole lot of
@@ -64,6 +64,7 @@ export const basicSetup: Extension = [
   closeBrackets(),
   autocompletion(),
   rectangularSelection(),
+  crosshairCursor(),
   highlightActiveLine(),
   highlightSelectionMatches(),
   keymap.of([
