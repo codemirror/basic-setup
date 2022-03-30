@@ -1,3 +1,9 @@
+## 0.19.3 (2022-03-30)
+
+### New features
+
+Add the extension that shows a crosshair cursor when Alt is held down to the basic setup.
+
 ## 0.19.1 (2021-12-13)
 
 ### New features
