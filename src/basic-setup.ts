@@ -10,7 +10,7 @@ import {closeBrackets, closeBracketsKeymap} from "@codemirror/closebrackets"
 import {searchKeymap, highlightSelectionMatches} from "@codemirror/search"
 import {autocompletion, completionKeymap} from "@codemirror/autocomplete"
 import {commentKeymap} from "@codemirror/comment"
-import {rectangularSelection} from "@codemirror/rectangular-selection"
+import {rectangularSelection, crosshairCursor} from "@codemirror/rectangular-selection"
 import {defaultHighlightStyle} from "@codemirror/highlight"
 import {lintKeymap} from "@codemirror/lint"
 
@@ -34,7 +34,7 @@ import {lintKeymap} from "@codemirror/lint"
 ///  - [bracket matching](#matchbrackets.bracketMatching)
 ///  - [bracket closing](#closebrackets.closeBrackets)
 ///  - [autocompletion](#autocomplete.autocompletion)
-///  - [rectangular selection](#rectangular-selection.rectangularSelection)
+///  - [rectangular selection](#rectangular-selection.rectangularSelection) and [crosshair cursor](#rectangular-selection.crosshairCursor)
 ///  - [active line highlighting](#view.highlightActiveLine)
 ///  - [active line gutter highlighting](#gutter.highlightActiveLineGutter)
 ///  - [selection match highlighting](#search.highlightSelectionMatches)
@@ -65,6 +65,7 @@ export const basicSetup: Extension = [
   closeBrackets(),
   autocompletion(),
   rectangularSelection(),
+  crosshairCursor(),
   highlightActiveLine(),
   highlightSelectionMatches(),
   keymap.of([
