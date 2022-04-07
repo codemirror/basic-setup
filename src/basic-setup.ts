@@ -13,10 +13,10 @@ import {commentKeymap} from "@codemirror/comment"
 import {rectangularSelection, crosshairCursor} from "@codemirror/rectangular-selection"
 import {lintKeymap} from "@codemirror/lint"
 
-/// This is an extension value that just pulls together a whole lot of
+/// This is an extension value that just pulls together a number of
 /// extensions that you might want in a basic editor. It is meant as a
 /// convenient helper to quickly set up CodeMirror without installing
-/// and importing a lot of packages.
+/// and importing a lot of separate packages.
 ///
 /// Specifically, it includes...
 ///
