@@ -1,16 +1,16 @@
-import {keymap, highlightSpecialChars, drawSelection, highlightActiveLine, dropCursor} from "@codemirror/view"
+import {keymap, highlightSpecialChars, drawSelection, highlightActiveLine, dropCursor,
+        rectangularSelection, crosshairCursor,
+        lineNumbers, highlightActiveLineGutter} from "@codemirror/view"
 import {Extension, EditorState} from "@codemirror/state"
 import {history, historyKeymap} from "@codemirror/history"
 import {foldGutter, foldKeymap} from "@codemirror/fold"
 import {defaultHighlightStyle, syntaxHighlighting, indentOnInput} from "@codemirror/language"
-import {lineNumbers, highlightActiveLineGutter} from "@codemirror/gutter"
 import {defaultKeymap} from "@codemirror/commands"
 import {bracketMatching} from "@codemirror/matchbrackets"
 import {closeBrackets, closeBracketsKeymap} from "@codemirror/closebrackets"
 import {searchKeymap, highlightSelectionMatches} from "@codemirror/search"
 import {autocompletion, completionKeymap} from "@codemirror/autocomplete"
 import {commentKeymap} from "@codemirror/comment"
-import {rectangularSelection, crosshairCursor} from "@codemirror/rectangular-selection"
 import {lintKeymap} from "@codemirror/lint"
 
 /// This is an extension value that just pulls together a number of
