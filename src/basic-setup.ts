@@ -6,9 +6,8 @@ import {history, historyKeymap} from "@codemirror/history"
 import {defaultHighlightStyle, syntaxHighlighting, indentOnInput, bracketMatching,
         foldGutter, foldKeymap} from "@codemirror/language"
 import {defaultKeymap} from "@codemirror/commands"
-import {closeBrackets, closeBracketsKeymap} from "@codemirror/closebrackets"
 import {searchKeymap, highlightSelectionMatches} from "@codemirror/search"
-import {autocompletion, completionKeymap} from "@codemirror/autocomplete"
+import {autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap} from "@codemirror/autocomplete"
 import {commentKeymap} from "@codemirror/comment"
 import {lintKeymap} from "@codemirror/lint"
 
