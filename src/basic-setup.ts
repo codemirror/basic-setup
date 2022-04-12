@@ -3,8 +3,8 @@ import {keymap, highlightSpecialChars, drawSelection, highlightActiveLine, dropC
         lineNumbers, highlightActiveLineGutter} from "@codemirror/view"
 import {Extension, EditorState} from "@codemirror/state"
 import {history, historyKeymap} from "@codemirror/history"
-import {foldGutter, foldKeymap} from "@codemirror/fold"
-import {defaultHighlightStyle, syntaxHighlighting, indentOnInput, bracketMatching} from "@codemirror/language"
+import {defaultHighlightStyle, syntaxHighlighting, indentOnInput, bracketMatching,
+        foldGutter, foldKeymap} from "@codemirror/language"
 import {defaultKeymap} from "@codemirror/commands"
 import {closeBrackets, closeBracketsKeymap} from "@codemirror/closebrackets"
 import {searchKeymap, highlightSelectionMatches} from "@codemirror/search"
