@@ -8,7 +8,6 @@ import {defaultHighlightStyle, syntaxHighlighting, indentOnInput, bracketMatchin
 import {defaultKeymap} from "@codemirror/commands"
 import {searchKeymap, highlightSelectionMatches} from "@codemirror/search"
 import {autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap} from "@codemirror/autocomplete"
-import {commentKeymap} from "@codemirror/comment"
 import {lintKeymap} from "@codemirror/lint"
 
 /// This is an extension value that just pulls together a number of
@@ -36,7 +35,6 @@ import {lintKeymap} from "@codemirror/lint"
 ///  - [active line gutter highlighting](#gutter.highlightActiveLineGutter)
 ///  - [selection match highlighting](#search.highlightSelectionMatches)
 ///  - [search](#search.searchKeymap)
-///  - [commenting](#comment.commentKeymap)
 ///  - [linting](#lint.lintKeymap)
 ///
 /// (You'll probably want to add some language package to your setup
@@ -71,7 +69,6 @@ export const basicSetup: Extension = [
     ...searchKeymap,
     ...historyKeymap,
     ...foldKeymap,
-    ...commentKeymap,
     ...completionKeymap,
     ...lintKeymap
   ])
