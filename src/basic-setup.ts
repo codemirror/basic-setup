@@ -2,10 +2,9 @@ import {keymap, highlightSpecialChars, drawSelection, highlightActiveLine, dropC
         rectangularSelection, crosshairCursor,
         lineNumbers, highlightActiveLineGutter} from "@codemirror/view"
 import {Extension, EditorState} from "@codemirror/state"
-import {history, historyKeymap} from "@codemirror/history"
 import {defaultHighlightStyle, syntaxHighlighting, indentOnInput, bracketMatching,
         foldGutter, foldKeymap} from "@codemirror/language"
-import {defaultKeymap} from "@codemirror/commands"
+import {defaultKeymap, history, historyKeymap} from "@codemirror/commands"
 import {searchKeymap, highlightSelectionMatches} from "@codemirror/search"
 import {autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap} from "@codemirror/autocomplete"
 import {lintKeymap} from "@codemirror/lint"
@@ -18,21 +17,21 @@ import {lintKeymap} from "@codemirror/lint"
 /// Specifically, it includes...
 ///
 ///  - [the default command bindings](#commands.defaultKeymap)
-///  - [line numbers](#gutter.lineNumbers)
+///  - [line numbers](#view.lineNumbers)
 ///  - [special character highlighting](#view.highlightSpecialChars)
-///  - [the undo history](#history.history)
-///  - [a fold gutter](#fold.foldGutter)
+///  - [the undo history](#commands.history)
+///  - [a fold gutter](#language.foldGutter)
 ///  - [custom selection drawing](#view.drawSelection)
 ///  - [drop cursor](#view.dropCursor)
 ///  - [multiple selections](#state.EditorState^allowMultipleSelections)
 ///  - [reindentation on input](#language.indentOnInput)
 ///  - [the default highlight style](#language.defaultHighlightStyle) (as fallback)
-///  - [bracket matching](#matchbrackets.bracketMatching)
-///  - [bracket closing](#closebrackets.closeBrackets)
+///  - [bracket matching](#language.bracketMatching)
+///  - [bracket closing](#autocomplete.closeBrackets)
 ///  - [autocompletion](#autocomplete.autocompletion)
-///  - [rectangular selection](#rectangular-selection.rectangularSelection) and [crosshair cursor](#rectangular-selection.crosshairCursor)
+///  - [rectangular selection](#view.rectangularSelection) and [crosshair cursor](#view.crosshairCursor)
 ///  - [active line highlighting](#view.highlightActiveLine)
-///  - [active line gutter highlighting](#gutter.highlightActiveLineGutter)
+///  - [active line gutter highlighting](#view.highlightActiveLineGutter)
 ///  - [selection match highlighting](#search.highlightSelectionMatches)
 ///  - [search](#search.searchKeymap)
 ///  - [linting](#lint.lintKeymap)
