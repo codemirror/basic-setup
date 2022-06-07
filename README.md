@@ -1,9 +1,11 @@
-# @codemirror/basic-setup [![NPM version](https://img.shields.io/npm/v/@codemirror/basic-setup.svg)](https://www.npmjs.org/package/@codemirror/basic-setup)
+# codemirror [![NPM version](https://img.shields.io/npm/v/codemirror)](https://www.npmjs.org/package/codemirror)
 
-[ [**WEBSITE**](https://codemirror.net/6/) | [**DOCS**](https://codemirror.net/6/docs/ref/#basic-setup) | [**ISSUES**](https://github.com/codemirror/codemirror.next/issues) | [**FORUM**](https://discuss.codemirror.net/c/next/) | [**CHANGELOG**](https://github.com/codemirror/basic-setup/blob/main/CHANGELOG.md) ]
+[ [**WEBSITE**](https://codemirror.net/6/) | [**DOCS**](https://codemirror.net/6/docs/ref/#codemirror) | [**ISSUES**](https://github.com/codemirror/codemirror.next/issues) | [**FORUM**](https://discuss.codemirror.net/c/next/) | [**CHANGELOG**](https://github.com/codemirror/basic-setup/blob/main/CHANGELOG.md) ]
 
-This package implements an example configuration for the
-[CodeMirror](https://codemirror.net/6/) code editor.
+This package provides an example configuration for the
+[CodeMirror](https://codemirror.net/6/) code editor. The actual editor
+is implemented in the various packages under the `@codemirror` scope,
+which this package depends on.
 
 The [project page](https://codemirror.net/6/) has more information, a
 number of [examples](https://codemirror.net/6/examples/) and the

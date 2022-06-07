@@ -1,10 +1,10 @@
 {
-  "name": "@codemirror/basic-setup",
+  "name": "codemirror",
   "version": "0.20.0",
   "description": "Example configuration for the CodeMirror code editor",
   "scripts": {
     "test": "cm-runtests",
-    "prepare": "cm-buildhelper src/basic-setup.ts"
+    "prepare": "cm-buildhelper src/codemirror.ts"
   },
   "keywords": [
     "editor",
@@ -39,6 +39,6 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/codemirror/basic-setup.git"
+    "url": "https://github.com/codemirror/codemirror.git"
   }
 }

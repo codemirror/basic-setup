@@ -39,11 +39,11 @@ import {lintKeymap} from "@codemirror/lint"
 /// (You'll probably want to add some language package to your setup
 /// too.)
 ///
-/// This package does not allow customization. The idea is that, once
-/// you decide you want to configure your editor more precisely, you
-/// take this package's source (which is just a bunch of imports and
-/// an array literal), copy it into your own code, and adjust it as
-/// desired.
+/// This extension does not allow customization. The idea is that,
+/// once you decide you want to configure your editor more precisely,
+/// you take this package's source (which is just a bunch of imports
+/// and an array literal), copy it into your own code, and adjust it
+/// as desired.
 export const basicSetup: Extension = [
   lineNumbers(),
   highlightActiveLineGutter(),
@@ -73,5 +73,21 @@ export const basicSetup: Extension = [
   ])
 ]
 
+/// A minimal set of extensions to create a functional editor. Only
+/// includes [the default keymap](#commands.defaultKeymap), [undo
+/// history](#commands.history), [special character
+/// highlighting](#view.highlightSpecialChars), [custom selection
+/// drawing](#view.drawSelection), and [default highlight
+/// style](#language.defaultHighlightStyle).
+export const minimalSetup: Extension = [
+  highlightSpecialChars(),
+  history(),
+  drawSelection(),
+  syntaxHighlighting(defaultHighlightStyle, {fallback: true}),
+  keymap.of([
+    ...defaultKeymap,
+    ...historyKeymap,
+  ])
+]
+
 export {EditorView} from "@codemirror/view"
-export {EditorState} from "@codemirror/state"
