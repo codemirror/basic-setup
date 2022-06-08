@@ -1,3 +1,15 @@
+## 6.0.0 (2022-06-08)
+
+### Breaking changes
+
+Change the package name from `@codemirror/example-setup` to just `codemirror`.
+
+The package no longer exports `EditorState` (since that is no longer necessary to set up a basic editor).
+
+### New features
+
+The new `minimalSetup` export provides a minimal set of editor extensions.
+
 ## 0.20.0 (2022-04-20)
 
 ### Breaking changes

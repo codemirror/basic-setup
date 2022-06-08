@@ -1,7 +1,7 @@
 {
   "name": "codemirror",
-  "version": "0.20.0",
-  "description": "Example configuration for the CodeMirror code editor",
+  "version": "6.0.0",
+  "description": "Basic configuration for the CodeMirror code editor",
   "scripts": {
     "test": "cm-runtests",
     "prepare": "cm-buildhelper src/codemirror.ts"
@@ -26,19 +26,19 @@
   "sideEffects": false,
   "license": "MIT",
   "dependencies": {
-    "@codemirror/autocomplete": "^0.20.0",
-    "@codemirror/commands": "^0.20.0",
-    "@codemirror/language": "^0.20.0",
-    "@codemirror/lint": "^0.20.0",
-    "@codemirror/search": "^0.20.0",
-    "@codemirror/state": "^0.20.0",
-    "@codemirror/view": "^0.20.0"
+    "@codemirror/autocomplete": "^6.0.0",
+    "@codemirror/commands": "^6.0.0",
+    "@codemirror/language": "^6.0.0",
+    "@codemirror/lint": "^6.0.0",
+    "@codemirror/search": "^6.0.0",
+    "@codemirror/state": "^6.0.0",
+    "@codemirror/view": "^6.0.0"
   },
   "devDependencies": {
     "@codemirror/buildhelper": "^0.1.5"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/codemirror/codemirror.git"
+    "url": "https://github.com/codemirror/basic-setup.git"
   }
 }
