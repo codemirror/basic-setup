@@ -9,6 +9,9 @@ import {searchKeymap, highlightSelectionMatches} from "@codemirror/search"
 import {autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap} from "@codemirror/autocomplete"
 import {lintKeymap} from "@codemirror/lint"
 
+// (The superfluous function calls around the list of extensions work
+// around current limitations in tree-shaking software.)
+
 /// This is an extension value that just pulls together a number of
 /// extensions that you might want in a basic editor. It is meant as a
 /// convenient helper to quickly set up CodeMirror without installing
@@ -44,7 +47,7 @@ import {lintKeymap} from "@codemirror/lint"
 /// you take this package's source (which is just a bunch of imports
 /// and an array literal), copy it into your own code, and adjust it
 /// as desired.
-export const basicSetup: Extension = [
+export const basicSetup: Extension = (() => [
   lineNumbers(),
   highlightActiveLineGutter(),
   highlightSpecialChars(),
@@ -71,7 +74,7 @@ export const basicSetup: Extension = [
     ...completionKeymap,
     ...lintKeymap
   ])
-]
+])()
 
 /// A minimal set of extensions to create a functional editor. Only
 /// includes [the default keymap](#commands.defaultKeymap), [undo
@@ -79,7 +82,7 @@ export const basicSetup: Extension = [
 /// highlighting](#view.highlightSpecialChars), [custom selection
 /// drawing](#view.drawSelection), and [default highlight
 /// style](#language.defaultHighlightStyle).
-export const minimalSetup: Extension = [
+export const minimalSetup: Extension = (() => [
   highlightSpecialChars(),
   history(),
   drawSelection(),
@@ -88,6 +91,6 @@ export const minimalSetup: Extension = [
     ...defaultKeymap,
     ...historyKeymap,
   ])
-]
+])()
 
 export {EditorView} from "@codemirror/view"
