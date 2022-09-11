@@ -47,25 +47,25 @@ import {lintKeymap} from "@codemirror/lint"
 /// you take this package's source (which is just a bunch of imports
 /// and an array literal), copy it into your own code, and adjust it
 /// as desired.
-export const basicSetup: Extension = (() => [
-  lineNumbers(),
-  highlightActiveLineGutter(),
-  highlightSpecialChars(),
-  history(),
-  foldGutter(),
-  drawSelection(),
-  dropCursor(),
-  EditorState.allowMultipleSelections.of(true),
-  indentOnInput(),
-  syntaxHighlighting(defaultHighlightStyle, {fallback: true}),
-  bracketMatching(),
-  closeBrackets(),
-  autocompletion(),
-  rectangularSelection(),
-  crosshairCursor(),
-  highlightActiveLine(),
-  highlightSelectionMatches(),
-  keymap.of([
+export const basicSetup: Extension = (() => ({
+  lineNumbers: lineNumbers(),
+  highlightActiveLineGutter: highlightActiveLineGutter(),
+  highlightSpecialChars: highlightSpecialChars(),
+  history: history(),
+  foldGutter: foldGutter(),
+  drawSelection: drawSelection(),
+  dropCursor: dropCursor(),
+  allowMultipleSelections: EditorState.allowMultipleSelections.of(true),
+  indentOnInput: indentOnInput(),
+  syntaxHighlighting: syntaxHighlighting(defaultHighlightStyle, {fallback: true}),
+  bracketMatching: bracketMatching(),
+  closeBrackets: closeBrackets(),
+  autocompletion: autocompletion(),
+  rectangularSelection: rectangularSelection(),
+  crosshairCursor: crosshairCursor(),
+  highlightActiveLine: highlightActiveLine(),
+  highlightSelectionMatches: highlightSelectionMatches(),
+  keymap: keymap.of([
     ...closeBracketsKeymap,
     ...defaultKeymap,
     ...searchKeymap,
@@ -74,7 +74,7 @@ export const basicSetup: Extension = (() => [
     ...completionKeymap,
     ...lintKeymap
   ])
-])()
+}))()
 
 /// A minimal set of extensions to create a functional editor. Only
 /// includes [the default keymap](#commands.defaultKeymap), [undo
