@@ -19,11 +19,11 @@ import {lintKeymap} from "@codemirror/lint"
 ///
 /// Specifically, it includes...
 ///
-///  - [the default command bindings](#commands.defaultKeymap)
+///  - [the default keymap](#commands.defaultKeymap)
 ///  - [line numbers](#view.lineNumbers)
 ///  - [special character highlighting](#view.highlightSpecialChars)
 ///  - [the undo history](#commands.history)
-///  - [the undo history key bindings](/#commands.historyKeymap)
+///  - [the undo history keymap](/#commands.historyKeymap)
 ///  - [a fold gutter](#language.foldGutter)
 ///  - [custom selection drawing](#view.drawSelection)
 ///  - [drop cursor](#view.dropCursor)
@@ -79,9 +79,9 @@ export const basicSetup: Extension = (() => [
 
 /// A minimal set of extensions to create a functional editor. Only
 /// includes [the default keymap](#commands.defaultKeymap), [undo
-/// history](#commands.history), [special character
-/// highlighting](#view.highlightSpecialChars), [custom selection
-/// drawing](#view.drawSelection), and [default highlight
+/// history](#commands.history), [undo history keymap](/#commands.historyKeymap)
+/// [special character highlighting](#view.highlightSpecialChars),
+/// [custom selection drawing](#view.drawSelection), and [default highlight
 /// style](#language.defaultHighlightStyle).
 export const minimalSetup: Extension = (() => [
   highlightSpecialChars(),
