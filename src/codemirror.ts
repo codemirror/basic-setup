@@ -23,6 +23,7 @@ import {lintKeymap} from "@codemirror/lint"
 ///  - [line numbers](#view.lineNumbers)
 ///  - [special character highlighting](#view.highlightSpecialChars)
 ///  - [the undo history](#commands.history)
+///  - [the undo history key bindings](/#commands.historyKeymap)
 ///  - [a fold gutter](#language.foldGutter)
 ///  - [custom selection drawing](#view.drawSelection)
 ///  - [drop cursor](#view.dropCursor)
