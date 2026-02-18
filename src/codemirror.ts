@@ -22,23 +22,22 @@ import {lintKeymap} from "@codemirror/lint"
 ///  - [the default keymap](#commands.defaultKeymap)
 ///  - [line numbers](#view.lineNumbers)
 ///  - [special character highlighting](#view.highlightSpecialChars)
-///  - [the undo history](#commands.history)
-///  - [the undo history keymap](/#commands.historyKeymap)
-///  - [a fold gutter](#language.foldGutter)
+///  - [the undo history](#commands.history) and [history keymap](/#commands.historyKeymap)
+///  - [a fold gutter](#language.foldGutter) and [fold keymap](#language.foldKeymap)
 ///  - [custom selection drawing](#view.drawSelection)
 ///  - [drop cursor](#view.dropCursor)
 ///  - [multiple selections](#state.EditorState^allowMultipleSelections)
 ///  - [reindentation on input](#language.indentOnInput)
 ///  - [the default highlight style](#language.defaultHighlightStyle) (as fallback)
 ///  - [bracket matching](#language.bracketMatching)
-///  - [bracket closing](#autocomplete.closeBrackets)
-///  - [autocompletion](#autocomplete.autocompletion)
+///  - [bracket closing](#autocomplete.closeBrackets) and [close brackets keymap](#autocomplete.closeBracketsKeymap)
+///  - [autocompletion](#autocomplete.autocompletion) and [completion keymap](#autocomplete.completionKeymap)
 ///  - [rectangular selection](#view.rectangularSelection) and [crosshair cursor](#view.crosshairCursor)
 ///  - [active line highlighting](#view.highlightActiveLine)
 ///  - [active line gutter highlighting](#view.highlightActiveLineGutter)
 ///  - [selection match highlighting](#search.highlightSelectionMatches)
-///  - [search](#search.searchKeymap)
-///  - [linting](#lint.lintKeymap)
+///  - [search keymap](#search.searchKeymap)
+///  - [lint keymap](#lint.lintKeymap)
 ///
 /// (You'll probably want to add some language package to your setup
 /// too.)
@@ -79,7 +78,7 @@ export const basicSetup: Extension = (() => [
 
 /// A minimal set of extensions to create a functional editor. Only
 /// includes [the default keymap](#commands.defaultKeymap), [undo
-/// history](#commands.history), [undo history keymap](/#commands.historyKeymap)
+/// history](#commands.history) and [history keymap](#commands.historyKeymap)
 /// [special character highlighting](#view.highlightSpecialChars),
 /// [custom selection drawing](#view.drawSelection), and [default highlight
 /// style](#language.defaultHighlightStyle).
