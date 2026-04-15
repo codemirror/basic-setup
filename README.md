@@ -1,3 +1,5 @@
+**This repository has moved to https://code.haverbeke.berlin/codemirror/basic-setup**
+
 # codemirror [![NPM version](https://img.shields.io/npm/v/codemirror)](https://www.npmjs.org/package/codemirror)
 
 [ [**WEBSITE**](https://codemirror.net/) | [**DOCS**](https://codemirror.net/docs/ref/#codemirror) | [**ISSUES**](https://code.haverbeke.berlin/codemirror/dev/issues) | [**FORUM**](https://discuss.codemirror.net/) | [**CHANGELOG**](https://code.haverbeke.berlin/codemirror/basic-setup/src/branch/main/CHANGELOG.md) ]
